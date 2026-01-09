@@ -69,7 +69,7 @@ class State:
         return iter((self.row, self.col))
 
     def is_valid(self) -> bool:
-        return 0 <= self.row < GRID_SIZE and 0 <= self.col < GRID_SIZE and self != OBSTACLE
+        return 0 <= self.row < GRID_SIZE and 0 <= self.col < GRID_SIZE and self not in OBSTACLES
 
     def next(self, action: Action) -> 'State':
         next_state = State(self.row + action.vertical, self.col + action.horizontal)
@@ -137,12 +137,12 @@ def update_q_table(q_table: QTable, state: State, action: Action,
 
 START = State(0, 0)
 GOAL = State(2, 2)
-OBSTACLE = State(1, 1)
+OBSTACLES = {State(1, 1)}
 
 def get_reward(state: State, next_state: State) -> int:
     if next_state == GOAL:
         return 100
-    elif next_state == OBSTACLE or next_state == state:
+    elif next_state in OBSTACLES or next_state == state:
         return -10
     else:
         return -1
@@ -175,7 +175,7 @@ def visualize_best_actions_grid(q_table: QTable) -> None:
         for j in range(GRID_SIZE):
             if State(i, j) == GOAL:
                 cell = "   GOAL    "
-            elif State(i, j) == OBSTACLE:
+            elif State(i, j) in OBSTACLES:
                 cell = " OBSTACLE  "
             else:
                 best_action = max(AllowedActions, key=lambda a: q_table[State(i, j), a])
