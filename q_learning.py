@@ -3,9 +3,11 @@ import random
 from typing import Tuple, List, DefaultDict, Iterator
 from collections import defaultdict
 from tabulate import tabulate
+import pygame
+import sys
 
 # Define the grid world
-GRID_SIZE = 3
+GRID_SIZE = 8 
 EPSILON = 0.3
 ALPHA = 0.3
 GAMMA = 0.99
@@ -136,8 +138,8 @@ def update_q_table(q_table: QTable, state: State, action: Action,
     q_table[state, action] += delta
 
 START = State(0, 0)
-GOAL = State(2, 2)
-OBSTACLES = {State(1, 1)}
+GOAL = State(GRID_SIZE - 2, GRID_SIZE - 1)
+OBSTACLES = {State(1, 1), State(3, 1), State(5, 2), State(7, 5)}
 
 def get_reward(state: State, next_state: State) -> int:
     if next_state == GOAL:
@@ -165,24 +167,128 @@ def train_agent() -> QTable:
 q_table = train_agent()
 
 def visualize_best_actions_grid(q_table: QTable) -> None:
-    """Visualize the best action and its Q-value for each state in a grid."""
-    print("\nBest Actions Grid:")
-    header = "-" * (14 * GRID_SIZE + 1)
-    print(header)
-
-    for i in range(GRID_SIZE):
-        row = "| "
-        for j in range(GRID_SIZE):
-            if State(i, j) == GOAL:
-                cell = "   GOAL    "
-            elif State(i, j) in OBSTACLES:
-                cell = " OBSTACLE  "
-            else:
-                best_action = max(AllowedActions, key=lambda a: q_table[State(i, j), a])
-                cell = f"{best_action} {q_table[State(i, j), best_action]:7.2f}  "
-            row += cell + " | "
-        print(row)
-        print(header)
+    """Visualize the best action and its Q-value for each state in a grid using pygame."""
+    # Initialize pygame
+    pygame.init()
+    
+    # Constants for visualization
+    CELL_SIZE = 80
+    WINDOW_SIZE = GRID_SIZE * CELL_SIZE
+    ARROW_SIZE = 20
+    
+    # Colors
+    WHITE = (255, 255, 255)
+    BLACK = (0, 0, 0)
+    GREEN = (0, 255, 0)
+    RED = (255, 0, 0)
+    BLUE = (100, 149, 237)
+    GRAY = (128, 128, 128)
+    LIGHT_BLUE = (173, 216, 230)
+    
+    # Create the window
+    screen = pygame.display.set_mode((WINDOW_SIZE, WINDOW_SIZE))
+    pygame.display.set_caption("Q-Learning Best Actions Grid")
+    
+    # Font for text
+    font = pygame.font.Font(None, 20)
+    goal_font = pygame.font.Font(None, 24)
+    
+    # Main loop
+    running = True
+    clock = pygame.time.Clock()
+    
+    while running:
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                running = False
+            elif event.type == pygame.KEYDOWN:
+                if event.key == pygame.K_ESCAPE:
+                    running = False
+        
+        # Fill background
+        screen.fill(WHITE)
+        
+        # Draw grid cells
+        for i in range(GRID_SIZE):
+            for j in range(GRID_SIZE):
+                x = j * CELL_SIZE
+                y = i * CELL_SIZE
+                
+                # Draw cell border
+                pygame.draw.rect(screen, BLACK, (x, y, CELL_SIZE, CELL_SIZE), 1)
+                
+                state = State(i, j)
+                
+                if state == GOAL:
+                    # Draw goal cell
+                    pygame.draw.rect(screen, GREEN, (x + 2, y + 2, CELL_SIZE - 4, CELL_SIZE - 4))
+                    text = goal_font.render("GOAL", True, BLACK)
+                    text_rect = text.get_rect(center=(x + CELL_SIZE // 2, y + CELL_SIZE // 2))
+                    screen.blit(text, text_rect)
+                    
+                elif state in OBSTACLES:
+                    # Draw obstacle cell
+                    pygame.draw.rect(screen, GRAY, (x + 2, y + 2, CELL_SIZE - 4, CELL_SIZE - 4))
+                    text = font.render("OBSTACLE", True, WHITE)
+                    text_rect = text.get_rect(center=(x + CELL_SIZE // 2, y + CELL_SIZE // 2))
+                    screen.blit(text, text_rect)
+                    
+                else:
+                    # Draw normal cell with best action
+                    best_action = max(AllowedActions, key=lambda a: q_table[state, a])
+                    q_value = q_table[state, best_action]
+                    
+                    # Draw light background
+                    pygame.draw.rect(screen, LIGHT_BLUE, (x + 2, y + 2, CELL_SIZE - 4, CELL_SIZE - 4))
+                    
+                    # Draw arrow for best action
+                    center_x = x + CELL_SIZE // 2
+                    center_y = y + CELL_SIZE // 2
+                    
+                    if best_action == UP:
+                        # Up arrow
+                        points = [
+                            (center_x, center_y - ARROW_SIZE),
+                            (center_x - ARROW_SIZE // 2, center_y),
+                            (center_x + ARROW_SIZE // 2, center_y)
+                        ]
+                    elif best_action == DOWN:
+                        # Down arrow
+                        points = [
+                            (center_x, center_y + ARROW_SIZE),
+                            (center_x - ARROW_SIZE // 2, center_y),
+                            (center_x + ARROW_SIZE // 2, center_y)
+                        ]
+                    elif best_action == LEFT:
+                        # Left arrow
+                        points = [
+                            (center_x - ARROW_SIZE, center_y),
+                            (center_x, center_y - ARROW_SIZE // 2),
+                            (center_x, center_y + ARROW_SIZE // 2)
+                        ]
+                    elif best_action == RIGHT:
+                        # Right arrow
+                        points = [
+                            (center_x + ARROW_SIZE, center_y),
+                            (center_x, center_y - ARROW_SIZE // 2),
+                            (center_x, center_y + ARROW_SIZE // 2)
+                        ]
+                    else:
+                        points = []
+                    
+                    if points:
+                        pygame.draw.polygon(screen, BLUE, points)
+                    
+                    # Draw Q-value
+                    q_text = font.render(f"{q_value:.2f}", True, BLACK)
+                    q_rect = q_text.get_rect(center=(center_x, y + CELL_SIZE - 15))
+                    screen.blit(q_text, q_rect)
+        
+        # Update display
+        pygame.display.flip()
+        clock.tick(30)
+    
+    pygame.quit()
 
 # Visualize the Q-table as a grid
 for item in q_table:
