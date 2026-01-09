@@ -166,6 +166,28 @@ def train_agent() -> QTable:
 # Train the agent
 q_table = train_agent()
 
+def get_path_to_goal(start_state: State, q_table: QTable, max_steps: int = 100) -> List[State]:
+    """Trace the path from start_state to GOAL using the best actions from q_table."""
+    path = [start_state]
+    current_state = start_state
+    steps = 0
+    
+    while current_state != GOAL and steps < max_steps:
+        # Get the best action for the current state
+        best_action = max(AllowedActions, key=lambda a: q_table[current_state, a])
+        # Move to the next state
+        next_state = current_state.next(best_action)
+        
+        # Avoid infinite loops (if agent gets stuck)
+        if next_state in path:
+            break
+            
+        path.append(next_state)
+        current_state = next_state
+        steps += 1
+    
+    return path
+
 def visualize_best_actions_grid(q_table: QTable) -> None:
     """Visualize the best action and its Q-value for each state in a grid using pygame."""
     # Initialize pygame
@@ -174,6 +196,7 @@ def visualize_best_actions_grid(q_table: QTable) -> None:
     # Constants for visualization
     CELL_SIZE = 80
     WINDOW_SIZE = GRID_SIZE * CELL_SIZE
+    HEADER_HEIGHT = 60
     ARROW_SIZE = 20
     
     # Colors
@@ -184,14 +207,20 @@ def visualize_best_actions_grid(q_table: QTable) -> None:
     BLUE = (100, 149, 237)
     GRAY = (128, 128, 128)
     LIGHT_BLUE = (173, 216, 230)
+    YELLOW = (255, 255, 0)
+    ORANGE = (255, 165, 0)
     
-    # Create the window
-    screen = pygame.display.set_mode((WINDOW_SIZE, WINDOW_SIZE))
-    pygame.display.set_caption("Q-Learning Best Actions Grid")
+    # Create the window with header space
+    screen = pygame.display.set_mode((WINDOW_SIZE, WINDOW_SIZE + HEADER_HEIGHT))
+    pygame.display.set_caption("Q-Learning Best Actions Grid - Click a cell to see path to goal")
     
     # Font for text
     font = pygame.font.Font(None, 20)
     goal_font = pygame.font.Font(None, 24)
+    header_font = pygame.font.Font(None, 22)
+    
+    # Track the selected path
+    selected_path = []
     
     # Main loop
     running = True
@@ -204,20 +233,60 @@ def visualize_best_actions_grid(q_table: QTable) -> None:
             elif event.type == pygame.KEYDOWN:
                 if event.key == pygame.K_ESCAPE:
                     running = False
+                elif event.key == pygame.K_SPACE or event.key == pygame.K_c:
+                    # Clear the selected path
+                    selected_path = []
+            elif event.type == pygame.MOUSEBUTTONDOWN:
+                # Get mouse position and convert to grid coordinates
+                mouse_x, mouse_y = pygame.mouse.get_pos()
+                
+                # Adjust for header height
+                if mouse_y >= HEADER_HEIGHT:
+                    grid_col = mouse_x // CELL_SIZE
+                    grid_row = (mouse_y - HEADER_HEIGHT) // CELL_SIZE
+                    
+                    # Check if click is within grid bounds
+                    if 0 <= grid_row < GRID_SIZE and 0 <= grid_col < GRID_SIZE:
+                        clicked_state = State(grid_row, grid_col)
+                        
+                        # Only trace path if it's not an obstacle
+                        if clicked_state not in OBSTACLES:
+                            selected_path = get_path_to_goal(clicked_state, q_table)
         
         # Fill background
         screen.fill(WHITE)
         
-        # Draw grid cells
+        # Draw header
+        pygame.draw.rect(screen, LIGHT_BLUE, (0, 0, WINDOW_SIZE, HEADER_HEIGHT))
+        pygame.draw.line(screen, BLACK, (0, HEADER_HEIGHT), (WINDOW_SIZE, HEADER_HEIGHT), 2)
+        
+        # Draw instructions
+        instruction_text = "Click on a cell to see path to goal | Press SPACE/C to clear | Press ESC to quit"
+        inst_surface = header_font.render(instruction_text, True, BLACK)
+        inst_rect = inst_surface.get_rect(center=(WINDOW_SIZE // 2, 20))
+        screen.blit(inst_surface, inst_rect)
+        
+        # Draw path info if a path is selected
+        if selected_path:
+            path_info = f"Path length: {len(selected_path)} steps"
+            info_surface = font.render(path_info, True, BLUE)
+            info_rect = info_surface.get_rect(center=(WINDOW_SIZE // 2, 45))
+            screen.blit(info_surface, info_rect)
+        
+        # Draw grid cells (offset by header height)
         for i in range(GRID_SIZE):
             for j in range(GRID_SIZE):
                 x = j * CELL_SIZE
-                y = i * CELL_SIZE
+                y = i * CELL_SIZE + HEADER_HEIGHT
                 
                 # Draw cell border
                 pygame.draw.rect(screen, BLACK, (x, y, CELL_SIZE, CELL_SIZE), 1)
                 
                 state = State(i, j)
+                
+                # Check if this cell is in the selected path
+                is_in_path = state in selected_path
+                path_index = selected_path.index(state) if is_in_path else -1
                 
                 if state == GOAL:
                     # Draw goal cell
@@ -238,8 +307,18 @@ def visualize_best_actions_grid(q_table: QTable) -> None:
                     best_action = max(AllowedActions, key=lambda a: q_table[state, a])
                     q_value = q_table[state, best_action]
                     
-                    # Draw light background
-                    pygame.draw.rect(screen, LIGHT_BLUE, (x + 2, y + 2, CELL_SIZE - 4, CELL_SIZE - 4))
+                    # Draw background - highlight if in path
+                    if is_in_path:
+                        if path_index == 0:
+                            # Starting cell - use orange
+                            bg_color = ORANGE
+                        else:
+                            # Path cell - use yellow
+                            bg_color = YELLOW
+                    else:
+                        bg_color = LIGHT_BLUE
+                    
+                    pygame.draw.rect(screen, bg_color, (x + 2, y + 2, CELL_SIZE - 4, CELL_SIZE - 4))
                     
                     # Draw arrow for best action
                     center_x = x + CELL_SIZE // 2
@@ -279,10 +358,21 @@ def visualize_best_actions_grid(q_table: QTable) -> None:
                     if points:
                         pygame.draw.polygon(screen, BLUE, points)
                     
-                    # Draw Q-value
-                    q_text = font.render(f"{q_value:.2f}", True, BLACK)
-                    q_rect = q_text.get_rect(center=(center_x, y + CELL_SIZE - 15))
-                    screen.blit(q_text, q_rect)
+                    # Draw Q-value and step number if in path
+                    if is_in_path:
+                        # Show step number
+                        step_text = font.render(f"Step {path_index}", True, BLACK)
+                        step_rect = step_text.get_rect(center=(center_x, y + 10))
+                        screen.blit(step_text, step_rect)
+                        
+                        q_text = font.render(f"{q_value:.2f}", True, BLACK)
+                        q_rect = q_text.get_rect(center=(center_x, y + CELL_SIZE - 15))
+                        screen.blit(q_text, q_rect)
+                    else:
+                        # Just show Q-value
+                        q_text = font.render(f"{q_value:.2f}", True, BLACK)
+                        q_rect = q_text.get_rect(center=(center_x, y + CELL_SIZE - 15))
+                        screen.blit(q_text, q_rect)
         
         # Update display
         pygame.display.flip()
