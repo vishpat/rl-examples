@@ -11,7 +11,7 @@ GRID_SIZE = 8
 EPSILON = 0.3
 ALPHA = 0.3
 GAMMA = 0.99
-EPISODES = 1000 
+EPISODES = 10000 
 
 class Action:
 
