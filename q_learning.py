@@ -2,17 +2,14 @@ import numpy as np
 import random
 from typing import Tuple, List, DefaultDict, Iterator
 from collections import defaultdict
+from tabulate import tabulate
 
 # Define the grid world
 GRID_SIZE = 3
-START = (0, 0)
-GOAL = (2, 2)
-OBSTACLE = (1, 1)
-
 EPSILON = 0.3
 ALPHA = 0.3
 GAMMA = 0.99
-EPISODES = 10000
+EPISODES = 1000 
 
 class Action:
 
@@ -27,20 +24,30 @@ class Action:
         return hash((self.vertical, self.horizontal))
 
     def __str__(self) -> str:
-        return f"({self.vertical}, {self.horizontal})"
+        if self.vertical == -1:
+            return "^"
+        elif self.vertical == 1:
+            return "v"
+        elif self.horizontal == 1:
+            return ">"
+        elif self.horizontal == -1:
+            return "<"
+        else:
+            return "?"
 
     def __repr__(self) -> str:
-        return f"Action(vertical={self.vertical}, horizontal={self.horizontal})"
+        return self.__str__()
 
     def __iter__(self) -> Iterator[int]:
         return iter((self.vertical, self.horizontal))
 
-AllowedActions = {
-    Action(0, 1),
-    Action(0, -1),
-    Action(1, 0),
-    Action(-1, 0),
-}
+UP = Action(-1, 0)
+DOWN = Action(1, 0)
+LEFT = Action(0, -1)
+RIGHT = Action(0, 1)
+
+AllowedActions = {UP, DOWN, LEFT, RIGHT}
+
 class State:
     def __init__(self, row: int, col: int):
         self.row = row
@@ -61,9 +68,12 @@ class State:
     def __iter__(self) -> Iterator[int]:
         return iter((self.row, self.col))
 
-    def next(self, action: Action) -> 'State':
-        return State(self.row + action.horizontal, self.col + action.vertical)
+    def is_valid(self) -> bool:
+        return 0 <= self.row < GRID_SIZE and 0 <= self.col < GRID_SIZE and self != OBSTACLE
 
+    def next(self, action: Action) -> 'State':
+        next_state = State(self.row + action.vertical, self.col + action.horizontal)
+        return next_state if next_state.is_valid() else self
 
 
 class QTable:
@@ -89,10 +99,10 @@ class QTable:
         return len(self.table)
 
     def __str__(self) -> str:
-        return str(self.table)
+        return tabulate(self.table.items(), headers=["State", "Action", "Q-value"], tablefmt="grid")
 
     def __repr__(self) -> str:
-        return f"QTable(table={self.table})"
+        return tabulate(self.table.items(), headers=["State", "Action", "Q-value"], tablefmt="grid")
 
     def __hash__(self) -> int:
         return hash(tuple(self.table.items()))
@@ -117,8 +127,25 @@ def choose_action(state: State, q_table: QTable) -> Action:
 
 def update_q_table(q_table: QTable, state: State, action: Action, 
                    reward: int, next_state: State) -> None:
-    max_next_q = max(q_table[next_state, a] for a in AllowedActions)
-    q_table[state, action] += ALPHA * (reward + GAMMA * max_next_q - q_table[state, action])
+    # If next_state is terminal (GOAL), there are no future rewards
+    if next_state == GOAL:
+        max_next_q = 0
+    else:
+        max_next_q = max(q_table[next_state, a] for a in AllowedActions)
+    delta = ALPHA * (reward + GAMMA * max_next_q - q_table[state, action])
+    q_table[state, action] += delta
+
+START = State(0, 0)
+GOAL = State(2, 2)
+OBSTACLE = State(1, 1)
+
+def get_reward(state: State, next_state: State) -> int:
+    if next_state == GOAL:
+        return 100
+    elif next_state == OBSTACLE or next_state == state:
+        return -10
+    else:
+        return -1
 
 def train_agent() -> QTable:
     q_table = QTable()
@@ -128,8 +155,7 @@ def train_agent() -> QTable:
         while state != State(*GOAL):
             action = choose_action(state, q_table)
             next_state = state.next(action)
-            print(f"State: {state}, Action: {action}, Next State: {next_state}")
-            reward = 1 if next_state == State(*GOAL) else -1
+            reward = get_reward(state, next_state)
             update_q_table(q_table, state, action, reward, next_state)
             state = next_state
     
@@ -138,36 +164,8 @@ def train_agent() -> QTable:
 # Train the agent
 q_table = train_agent()
 
-def visualize_q_table_as_grid(q_table: QTable) -> None:
-    """Visualize the Q-table as a grid with all action values for each state."""
-    action_symbols = ['^', '>', 'v', '<']
-    
-    print("\nDetailed Q-table Grid:")
-    
-    # Header
-    header = "   |" + "|".join(f"   ({i},{j})   " for i in range(GRID_SIZE) for j in range(GRID_SIZE)) + "|"
-    print(header)
-    print("-" * len(header))
-
-    for action_idx, action_symbol in enumerate(action_symbols):
-        row = f" {action_symbol} |"
-        for i in range(GRID_SIZE):
-            for j in range(GRID_SIZE):
-                if (i, j) == GOAL:
-                    cell = "   GOAL    "
-                elif (i, j) == OBSTACLE:
-                    cell = " OBSTACLE  "
-                else:
-                    q_value = q_table[State(i, j)][action_idx]
-                    cell = f" {q_value:9.2f} "
-                row += cell + "|"
-        print(row)
-        print("-" * len(header))
-
 def visualize_best_actions_grid(q_table: QTable) -> None:
     """Visualize the best action and its Q-value for each state in a grid."""
-    action_symbols = ['^', '>', 'v', '<']
-    
     print("\nBest Actions Grid:")
     header = "-" * (14 * GRID_SIZE + 1)
     print(header)
@@ -175,20 +173,20 @@ def visualize_best_actions_grid(q_table: QTable) -> None:
     for i in range(GRID_SIZE):
         row = "| "
         for j in range(GRID_SIZE):
-            if (i, j) == GOAL:
+            if State(i, j) == GOAL:
                 cell = "   GOAL    "
-            elif (i, j) == OBSTACLE:
+            elif State(i, j) == OBSTACLE:
                 cell = " OBSTACLE  "
             else:
-                best_action_idx = max(q_table[State(i, j)].items(), key=lambda x: x[1])[0]
-                best_q_value = q_table[State(i, j)][best_action_idx]
-                cell = f"{action_symbols[best_action_idx]}:{best_q_value:7.2f}  "
+                best_action = max(AllowedActions, key=lambda a: q_table[State(i, j), a])
+                cell = f"{best_action} {q_table[State(i, j), best_action]:7.2f}  "
             row += cell + " | "
         print(row)
         print(header)
 
 # Visualize the Q-table as a grid
-visualize_q_table_as_grid(q_table)
-
+for item in q_table:
+    state, action = item
+    print(f"State: {state}, Action: {action}")
 # Visualize the best actions and their Q-values in a grid
 visualize_best_actions_grid(q_table)
