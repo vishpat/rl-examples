@@ -113,16 +113,15 @@ optimizer = optim.Adam(q_network.parameters(), lr=LEARNING_RATE)
 # ========================================
 # Epsilon-greedy: With prob epsilon, random action (explore); else argmax Q(s,a) (exploit).
 # Epsilon decays over episodes for more exploitation later.
-epsilon = EPSILON_START
 
 # ========================================
 # STEP 7: TRAINING LOOP
 # ========================================
 # Main loop: Episodes -> Steps -> Interact, Store, Sample, Update.
-episode_rewards = []
-step_count = 0  # Global step counter for target updates
-
 def train():
+    epsilon = EPSILON_START
+    episode_rewards = []
+    step_count = 0  # Global step counter for target updates
     for episode in range(NUM_EPISODES):
         state, _ = env.reset()
         episode_reward = 0
@@ -154,11 +153,8 @@ def train():
                 
                 # Target Q(s', a') using target_network (double DQN: argmax from q_net, value from target)
                 with torch.no_grad():
-                    next_q_values = target_network(next_state_batch)
-                    next_actions = q_network(next_state_batch).argmax(1, keepdim=True)  # Double DQN
-                    target_next_q = next_q_values.gather(1, next_actions)
-                    target_q = reward_batch.unsqueeze(1) + (GAMMA * target_next_q * ~done_batch.unsqueeze(1))
-                
+                    next_q = target_network(next_state_batch).max(dim=1, keepdim=True)[0]
+                    target_q = reward_batch + (~done_batch).float() * GAMMA * next_q
                 # Loss: MSE (Bellman error)
                 loss = F.mse_loss(q_values, target_q)
                 
@@ -215,7 +211,7 @@ def evaluate(q_network: QNetwork, num_episodes: int = 100):
     print(f"Evaluation Avg Reward: {np.mean(scores):.2f} ± {np.std(scores):.2f}")
     return scores
 
-
+train()
 checkpoint = torch.load('cartpole_dqn.pth', weights_only=False)
 q_network.load_state_dict(checkpoint)
 q_network.eval()
