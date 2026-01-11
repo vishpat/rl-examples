@@ -36,7 +36,7 @@ EPSILON_END = 0.01          # Final (minimum) exploration rate
 EPSILON_DECAY = 0.995       # Decay rate per episode
 LEARNING_RATE = 5e-4        # Adam optimizer learning rate
 TARGET_UPDATE_FREQ = 1000   # Steps between target network updates (tau=1 soft update alternative)
-NUM_EPISODES = 1000         # Total training episodes
+NUM_EPISODES = 10000         # Total training episodes
 MAX_STEPS_PER_EPISODE = 500 # Cap per episode (env default)
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print(f"Using device: {DEVICE}")
@@ -85,7 +85,7 @@ replay_buffer = ReplayBuffer(BUFFER_SIZE)
 # - Hidden: 128 -> 128 (ReLU)
 # - Output: Q-values for each action (2,)
 class QNetwork(nn.Module):
-    def __init__(self, state_dim: int, action_dim: int, hidden_dim: int = 128):
+    def __init__(self, state_dim: int, action_dim: int, hidden_dim: int = 256):
         super().__init__()
         self.fc1 = nn.Linear(state_dim, hidden_dim)
         self.fc2 = nn.Linear(hidden_dim, hidden_dim)
@@ -122,74 +122,77 @@ epsilon = EPSILON_START
 episode_rewards = []
 step_count = 0  # Global step counter for target updates
 
-for episode in range(NUM_EPISODES):
-    state, _ = env.reset()
-    episode_reward = 0
-    
-    for step in range(MAX_STEPS_PER_EPISODE):
-        # Epsilon-greedy action selection
-        if random.random() < epsilon:
-            action = env.action_space.sample()  # Random (explore)
-        else:
-            with torch.no_grad():
-                q_values = q_network(torch.FloatTensor(state).to(DEVICE))
-                action = q_values.argmax().item()  # Greedy (exploit)
+def train():
+    for episode in range(NUM_EPISODES):
+        state, _ = env.reset()
+        episode_reward = 0
         
-        # Step environment
-        next_state, reward, terminated, truncated, _ = env.step(action)
-        done = terminated or truncated
-        episode_reward += reward
-        
-        # Store transition (normalize state? Optional for CartPole)
-        replay_buffer.push(Transition(state, action, reward, next_state, done))
-        
-        # Train if enough samples
-        if len(replay_buffer) >= BATCH_SIZE:
-            # Sample mini-batch
-            state_batch, action_batch, reward_batch, next_state_batch, done_batch = replay_buffer.sample(BATCH_SIZE)
+        for step in range(MAX_STEPS_PER_EPISODE):
+            # Epsilon-greedy action selection
+            if random.random() < epsilon:
+                action = env.action_space.sample()  # Random (explore)
+            else:
+                with torch.no_grad():
+                    q_values = q_network(torch.FloatTensor(state).to(DEVICE))
+                    action = q_values.argmax().item()  # Greedy (exploit)
             
-            # Q(s,a) prediction from q_network
-            q_values = q_network(state_batch).gather(1, action_batch)  # [batch, 1]
+            # Step environment
+            next_state, reward, terminated, truncated, _ = env.step(action)
+            done = terminated or truncated
+            episode_reward += reward
             
-            # Target Q(s', a') using target_network (double DQN: argmax from q_net, value from target)
-            with torch.no_grad():
-                next_q_values = target_network(next_state_batch)
-                next_actions = q_network(next_state_batch).argmax(1, keepdim=True)  # Double DQN
-                target_next_q = next_q_values.gather(1, next_actions)
-                target_q = reward_batch.unsqueeze(1) + (GAMMA * target_next_q * ~done_batch.unsqueeze(1))
+            # Store transition (normalize state? Optional for CartPole)
+            replay_buffer.push(Transition(state, action, reward, next_state, done))
             
-            # Loss: MSE (Bellman error)
-            loss = F.mse_loss(q_values, target_q)
+            # Train if enough samples
+            if len(replay_buffer) >= BATCH_SIZE:
+                # Sample mini-batch
+                state_batch, action_batch, reward_batch, next_state_batch, done_batch = replay_buffer.sample(BATCH_SIZE)
+                
+                # Q(s,a) prediction from q_network
+                q_values = q_network(state_batch).gather(1, action_batch)  # [batch, 1]
+                
+                # Target Q(s', a') using target_network (double DQN: argmax from q_net, value from target)
+                with torch.no_grad():
+                    next_q_values = target_network(next_state_batch)
+                    next_actions = q_network(next_state_batch).argmax(1, keepdim=True)  # Double DQN
+                    target_next_q = next_q_values.gather(1, next_actions)
+                    target_q = reward_batch.unsqueeze(1) + (GAMMA * target_next_q * ~done_batch.unsqueeze(1))
+                
+                # Loss: MSE (Bellman error)
+                loss = F.mse_loss(q_values, target_q)
+                
+                # Optimize
+                optimizer.zero_grad()
+                loss.backward()
+                # Clip gradients for stability
+                torch.nn.utils.clip_grad_value_(q_network.parameters(), 1.0)
+                optimizer.step()
             
-            # Optimize
-            optimizer.zero_grad()
-            loss.backward()
-            # Clip gradients for stability
-            torch.nn.utils.clip_grad_value_(q_network.parameters(), 1.0)
-            optimizer.step()
+            state = next_state
+            step_count += 1
+            
+            if done:
+                break
         
-        state = next_state
-        step_count += 1
+        # Decay epsilon
+        epsilon = max(EPSILON_END, epsilon * EPSILON_DECAY)
         
-        if done:
-            break
-    
-    # Decay epsilon
-    epsilon = max(EPSILON_END, epsilon * EPSILON_DECAY)
-    
-    # Update target network every TARGET_UPDATE_FREQ steps (hard update)
-    if step_count % TARGET_UPDATE_FREQ == 0:
-        target_network.load_state_dict(q_network.state_dict())
-    
-    episode_rewards.append(episode_reward)
-    
-    # Logging (every 100 episodes)
-    if (episode + 1) % 100 == 0:
-        avg_reward = np.mean(episode_rewards[-100:])
-        print(f"Episode {episode+1}/{NUM_EPISODES}, Avg Reward (last 100): {avg_reward:.2f}, "
-              f"Epsilon: {epsilon:.3f}, Buffer: {len(replay_buffer)}")
+        # Update target network every TARGET_UPDATE_FREQ steps (hard update)
+        if step_count % TARGET_UPDATE_FREQ == 0:
+            target_network.load_state_dict(q_network.state_dict())
+        
+        episode_rewards.append(episode_reward)
+        
+        # Logging (every 100 episodes)
+        if (episode + 1) % 100 == 0:
+            avg_reward = np.mean(episode_rewards[-100:])
+            print(f"Episode {episode+1}/{NUM_EPISODES}, Avg Reward (last 100): {avg_reward:.2f}, "
+                f"Epsilon: {epsilon:.3f}, Buffer: {len(replay_buffer)}")
+        
+        torch.save(q_network.state_dict(), 'cartpole_dqn.pth')
 
-# ========================================
+### ========================================
 # STEP 8: EVALUATION
 # ========================================
 # Test trained agent with epsilon=0 (pure greedy).
@@ -212,9 +215,6 @@ def evaluate(q_network: QNetwork, num_episodes: int = 100):
     print(f"Evaluation Avg Reward: {np.mean(scores):.2f} ± {np.std(scores):.2f}")
     return scores
 
-torch.save(q_network.state_dict(), 'cartpole_dqn.pth')
-torch.save(target_network.state_dict(), 'cartpole_dqn_target.pth')
-torch.save(optimizer.state_dict(), 'cartpole_dqn_optimizer.pth')
 
 checkpoint = torch.load('cartpole_dqn.pth', weights_only=False)
 q_network.load_state_dict(checkpoint)
