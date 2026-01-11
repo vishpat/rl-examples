@@ -36,7 +36,7 @@ EPSILON_END = 0.01          # Final (minimum) exploration rate
 EPSILON_DECAY = 0.995       # Decay rate per episode
 LEARNING_RATE = 5e-4        # Adam optimizer learning rate
 TARGET_UPDATE_FREQ = 1000   # Steps between target network updates (tau=1 soft update alternative)
-NUM_EPISODES = 20000         # Total training episodes
+NUM_EPISODES = 1000         # Total training episodes
 MAX_STEPS_PER_EPISODE = 500 # Cap per episode (env default)
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print(f"Using device: {DEVICE}")
@@ -193,7 +193,7 @@ for episode in range(NUM_EPISODES):
 # STEP 8: EVALUATION
 # ========================================
 # Test trained agent with epsilon=0 (pure greedy).
-def evaluate(num_episodes: int = 100):
+def evaluate(q_network: QNetwork, num_episodes: int = 100):
     env = gym.make('CartPole-v1', render_mode='human')  # Render for viz
     scores = []
     for _ in range(num_episodes):
@@ -212,18 +212,14 @@ def evaluate(num_episodes: int = 100):
     print(f"Evaluation Avg Reward: {np.mean(scores):.2f} ± {np.std(scores):.2f}")
     return scores
 
-model.save('cartpole_dqn.pth')
-target_network.save('cartpole_dqn_target.pth')
-optimizer.save('cartpole_dqn_optimizer.pth')
-epsilon = EPSILON_END
+torch.save(q_network.state_dict(), 'cartpole_dqn.pth')
+torch.save(target_network.state_dict(), 'cartpole_dqn_target.pth')
+torch.save(optimizer.state_dict(), 'cartpole_dqn_optimizer.pth')
 
-model = torch.load('cartpole_dqn.pth')
-target_network = torch.load('cartpole_dqn_target.pth')
-optimizer = torch.load('cartpole_dqn_optimizer.pth')
-epsilon = EPSILON_START
-
-
-evaluate()
+checkpoint = torch.load('cartpole_dqn.pth', weights_only=False)
+q_network.load_state_dict(checkpoint)
+q_network.eval()
+evaluate(q_network)
 
 # ========================================
 # DETAILED EXPLANATIONS
