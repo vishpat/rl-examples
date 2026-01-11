@@ -192,10 +192,14 @@ def train():
 # STEP 8: EVALUATION
 # ========================================
 # Test trained agent with epsilon=0 (pure greedy).
-def evaluate(q_network: QNetwork, num_episodes: int = 100):
+def evaluate(num_episodes: int = 1000):
+    checkpoint = torch.load('cartpole_dqn.pth', weights_only=False)
+    q_network.load_state_dict(checkpoint)
+    q_network.eval()
     env = gym.make('CartPole-v1', render_mode='human')  # Render for viz
     scores = []
-    for _ in range(num_episodes):
+    for i in range(num_episodes):
+        print(f"Evaluating episode {i+1}/{num_episodes}")
         state, _ = env.reset()
         total_reward = 0
         done = False
@@ -212,10 +216,7 @@ def evaluate(q_network: QNetwork, num_episodes: int = 100):
     return scores
 
 train()
-checkpoint = torch.load('cartpole_dqn.pth', weights_only=False)
-q_network.load_state_dict(checkpoint)
-q_network.eval()
-evaluate(q_network)
+evaluate()
 
 # ========================================
 # DETAILED EXPLANATIONS
