@@ -154,7 +154,7 @@ def train():
                 # Target Q(s', a') using target_network (double DQN: argmax from q_net, value from target)
                 with torch.no_grad():
                     next_q = target_network(next_state_batch).max(dim=1, keepdim=True)[0]
-                    target_q = reward_batch + (~done_batch).float() * GAMMA * next_q
+                    target_q = reward_batch.unsqueeze(1) + (~done_batch).unsqueeze(1).float() * GAMMA * next_q
                 # Loss: MSE (Bellman error)
                 loss = F.mse_loss(q_values, target_q)
                 
