@@ -4,6 +4,7 @@ import torch.nn as nn
 import torch.optim as optim
 import torch.nn.functional as F
 import numpy as np
+import sys
 import collections
 import random
 from typing import Tuple, NamedTuple
@@ -16,7 +17,7 @@ from typing import Tuple, NamedTuple
 # - Action space: Discrete(2) -> 0: move cart left, 1: move cart right
 # - Episode terminates if pole angle > ±12°, cart position > ±2.4, or >500 steps (solved threshold).
 # Goal: Maximize episode length (balance the pole as long as possible).
-env = gym.make('CartPole-v1', render_mode=None)  # No rendering for training speed
+env = gym.make('LunarLander-v3', render_mode=None)  # No rendering for training speed
 state, info = env.reset()
 print(f"Observation space: {env.observation_space}")
 print(f"Action space: {env.action_space}")
@@ -36,7 +37,7 @@ EPSILON_END = 0.01          # Final (minimum) exploration rate
 EPSILON_DECAY = 0.995       # Decay rate per episode
 LEARNING_RATE = 5e-4        # Adam optimizer learning rate
 TARGET_UPDATE_FREQ = 1000   # Steps between target network updates (tau=1 soft update alternative)
-NUM_EPISODES = 10000         # Total training episodes
+NUM_EPISODES = 5000         # Total training episodes
 MAX_STEPS_PER_EPISODE = 500 # Cap per episode (env default)
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print(f"Using device: {DEVICE}")
@@ -96,8 +97,9 @@ class QNetwork(nn.Module):
         x = F.relu(self.fc2(x))
         return self.fc3(x)  # Raw Q-values (no softmax; use argmax)
 
-state_dim = env.observation_space.shape[0]  # 4
-action_dim = env.action_space.n             # 2
+state_dim = env.observation_space.shape[0]  
+action_dim = env.action_space.n            
+print(f"state_dim: {state_dim}, action_dim: {action_dim}")
 q_network = QNetwork(state_dim, action_dim).to(DEVICE)
 target_network = QNetwork(state_dim, action_dim).to(DEVICE)  # Target net starts as copy of q_net
 target_network.load_state_dict(q_network.state_dict())      # Hard copy
@@ -147,17 +149,17 @@ def train():
             if len(replay_buffer) >= BATCH_SIZE:
                 # Sample mini-batch
                 state_batch, action_batch, reward_batch, next_state_batch, done_batch = replay_buffer.sample(BATCH_SIZE)
-                
                 # Q(s,a) prediction from q_network
-                q_values = q_network(state_batch).gather(1, action_batch)  # [batch, 1]
-                
+                q_values = q_network(state_batch)
+                q_values = q_values.gather(1, action_batch)
                 # Target Q(s', a') using target_network (double DQN: argmax from q_net, value from target)
                 with torch.no_grad():
-                    next_q = target_network(next_state_batch).max(dim=1, keepdim=True)[0]
+                    # Double DQN: select action with q_network, evaluate with target_network
+                    best_actions = q_network(next_state_batch).argmax(dim=1, keepdim=True)
+                    next_q = target_network(next_state_batch).gather(1, best_actions)
                     target_q = reward_batch.unsqueeze(1) + (~done_batch).unsqueeze(1).float() * GAMMA * next_q
                 # Loss: MSE (Bellman error)
                 loss = F.mse_loss(q_values, target_q)
-                
                 # Optimize
                 optimizer.zero_grad()
                 loss.backward()
@@ -196,7 +198,7 @@ def evaluate(num_episodes: int = 1000):
     checkpoint = torch.load('cartpole_dqn.pth', weights_only=False)
     q_network.load_state_dict(checkpoint)
     q_network.eval()
-    env = gym.make('CartPole-v1', render_mode='human')  # Render for viz
+    env = gym.make('LunarLander-v3', render_mode='human')  # Render for viz
     scores = []
     for i in range(num_episodes):
         print(f"Evaluating episode {i+1}/{num_episodes}")
@@ -215,7 +217,7 @@ def evaluate(num_episodes: int = 1000):
     print(f"Evaluation Avg Reward: {np.mean(scores):.2f} ± {np.std(scores):.2f}")
     return scores
 
-train()
+#train()
 evaluate()
 
 # ========================================
