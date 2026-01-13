@@ -125,6 +125,7 @@ def train():
     epsilon = EPSILON_START
     episode_rewards = []
     step_count = 0  # Global step counter for target updates
+    prev_avg_reward = -float('inf')
     for episode in range(NUM_EPISODES):
         state, _ = env.reset()
         episode_reward = 0
@@ -189,7 +190,10 @@ def train():
             print(f"Episode {episode+1}/{NUM_EPISODES}, Avg Reward (last 100): {avg_reward:.2f}, "
                 f"Epsilon: {epsilon:.3f}, Buffer: {len(replay_buffer)}")
         
-        torch.save(q_network.state_dict(), f'{problem}_dqn.pth')
+            if avg_reward > prev_avg_reward:
+                prev_avg_reward = avg_reward
+                print(f"Saving checkpoint at episode {episode+1} with average reward {avg_reward:.2f}")
+                torch.save(q_network.state_dict(), f'{problem}_dqn.pth')
 
 ### ========================================
 # STEP 8: EVALUATION
