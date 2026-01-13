@@ -17,7 +17,8 @@ from typing import Tuple, NamedTuple
 # - Action space: Discrete(2) -> 0: move cart left, 1: move cart right
 # - Episode terminates if pole angle > ±12°, cart position > ±2.4, or >500 steps (solved threshold).
 # Goal: Maximize episode length (balance the pole as long as possible).
-env = gym.make('LunarLander-v3', render_mode=None)  # No rendering for training speed
+problem = 'LunarLander-v3'
+env = gym.make(problem, render_mode=None)  # No rendering for training speed
 state, info = env.reset()
 print(f"Observation space: {env.observation_space}")
 print(f"Action space: {env.action_space}")
@@ -29,13 +30,13 @@ print(f"Action space: {env.action_space}")
 # STEP 2: HYPERPARAMETERS
 # ========================================
 # Key DQN hyperparameters tuned for CartPole (common values that work well).
-BUFFER_SIZE = int(1e5)      # Max experiences in replay buffer
-BATCH_SIZE = 64             # Mini-batch size for training
+BUFFER_SIZE = int(2e5)      # Max experiences in replay buffer
+BATCH_SIZE = 128             # Mini-batch size for training
 GAMMA = 0.99                # Discount factor for future rewards
 EPSILON_START = 1.0         # Initial exploration rate
 EPSILON_END = 0.01          # Final (minimum) exploration rate
 EPSILON_DECAY = 0.995       # Decay rate per episode
-LEARNING_RATE = 5e-4        # Adam optimizer learning rate
+LEARNING_RATE = 1e-4        # Adam optimizer learning rate
 TARGET_UPDATE_FREQ = 1000   # Steps between target network updates (tau=1 soft update alternative)
 NUM_EPISODES = 5000         # Total training episodes
 MAX_STEPS_PER_EPISODE = 500 # Cap per episode (env default)
@@ -188,17 +189,17 @@ def train():
             print(f"Episode {episode+1}/{NUM_EPISODES}, Avg Reward (last 100): {avg_reward:.2f}, "
                 f"Epsilon: {epsilon:.3f}, Buffer: {len(replay_buffer)}")
         
-        torch.save(q_network.state_dict(), 'cartpole_dqn.pth')
+        torch.save(q_network.state_dict(), f'{problem}_dqn.pth')
 
 ### ========================================
 # STEP 8: EVALUATION
 # ========================================
 # Test trained agent with epsilon=0 (pure greedy).
 def evaluate(num_episodes: int = 1000):
-    checkpoint = torch.load('cartpole_dqn.pth', weights_only=False)
+    checkpoint = torch.load(f'{problem}_dqn.pth', weights_only=False)
     q_network.load_state_dict(checkpoint)
     q_network.eval()
-    env = gym.make('LunarLander-v3', render_mode='human')  # Render for viz
+    env = gym.make(problem, render_mode='human')  # Render for viz
     scores = []
     for i in range(num_episodes):
         print(f"Evaluating episode {i+1}/{num_episodes}")
@@ -217,7 +218,7 @@ def evaluate(num_episodes: int = 1000):
     print(f"Evaluation Avg Reward: {np.mean(scores):.2f} ± {np.std(scores):.2f}")
     return scores
 
-#train()
+train()
 evaluate()
 
 # ========================================
