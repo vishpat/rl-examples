@@ -2,6 +2,7 @@ import requests
 import os
 import torch
 from torch.utils.data import Dataset
+from torch.utils.data import Subset
 
 
 def test_encode_decode():
@@ -61,6 +62,12 @@ class ShakespeareDataset(Dataset):
     def __len__(self):
         return len(self.data) - self.block_size
 
+    def train_test_split(self, test_size=0.1):
+        size = len(self)
+        test = Subset(self, range(int(size * test_size)))
+        train = Subset(self, range(int(size * test_size), size))
+        return train, test
+
     def __getitem__(self, idx):
         # Input sequence and target (shifted by 1)
         x = self.data[idx : idx + self.block_size]
@@ -69,5 +76,14 @@ class ShakespeareDataset(Dataset):
 
 
 if __name__ == "__main__":
-    test_encode_decode()
-    print("All tests passed")
+    tokenizer = CharTokenizer(download_shakespeare())
+    dataset = ShakespeareDataset(download_shakespeare(), tokenizer)
+    train, test = dataset.train_test_split(test_size=0.1)
+    print(f"train: {len(train)}")
+    print(f"test: {len(test)}")
+    for x, y in train:
+        print(f"x: {x.shape} y: {y.shape}")
+        break
+    for x, y in test:
+        print(f"x: {x.shape} y: {y.shape}")
+        break
