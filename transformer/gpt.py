@@ -27,11 +27,11 @@ class CharTokenizer:
         self.char_to_idx = {ch: i for i, ch in enumerate(self.chars)}
         self.idx_to_char = {i: ch for i, ch in enumerate(self.chars)}
     
-    def encode(self, text):
+    def encode(self, text: str) -> torch.Tensor:
         return torch.tensor([self.char_to_idx[ch] for ch in text], dtype=torch.long)
     
-    def decode(self, indices):
-        return ''.join([self.idx_to_char[i.item()] for i in indices])
+    def decode(self, indices: torch.Tensor) -> str:
+        return ''.join([self.idx_to_char[int(i)] for i in indices])
 
 class ShakespeareDataset(Dataset):
     """Dataset for autoregressive language modeling"""
@@ -39,7 +39,7 @@ class ShakespeareDataset(Dataset):
     def __init__(self, text, tokenizer, block_size=128):
         self.tokenizer = tokenizer
         self.block_size = block_size
-        self.data = torch.tensor(tokenizer.encode(text), dtype=torch.long)
+        self.data = tokenizer.encode(text)
     
     def __len__(self):
         return len(self.data) - self.block_size
