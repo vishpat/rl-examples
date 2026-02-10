@@ -51,9 +51,13 @@ class ShakespeareDataset(Dataset):
         return x, y
 
 if __name__ == "__main__":
-    tokenizer = CharTokenizer(download_shakespeare())
-    dataset = ShakespeareDataset(download_shakespeare(), tokenizer)
+    text = download_shakespeare()
+    print(f"text: {text} {len(text)}")
+    tokenizer = CharTokenizer(text)
+    print(f"tokenizer: {tokenizer.vocab_size}")
+    dataset = ShakespeareDataset(text, tokenizer)
+    print(f"dataset: {len(dataset)}")
     for x, y in dataset:
-        print(x)
-        print(y)
+        print(f"x: {x} {x.shape}")
+        print(f"y: {y} {y.shape}")
         break
