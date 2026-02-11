@@ -90,9 +90,12 @@ class BigramLanguageModel(nn.Module):
 
     def forward(self, x, y=None):
         logits = self.embed(x)
-        print(f"logits: {logits.shape} {logits}")
+        B, T, C = logits.shape
+        logits = logits.view(B * T, C)
+        print(f"logits: {logits.shape} {logits} y: {y.shape} {y}")
         if y is not None:
-            loss = F.cross_entropy(logits, y)
+            y = y.view(B * T)
+            loss = F.cross_entropy(logits, y, ignore_index=-1)
             return logits, loss
         return logits, None
 
