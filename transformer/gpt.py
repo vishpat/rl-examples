@@ -6,6 +6,9 @@ from torch.nn import functional as F
 from torch.utils.data import Dataset
 from typing import Tuple
 
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+print(f"Using device: {device}")
+
 
 def test_encode_decode():
     text = "Hello, world! This is a test."
@@ -59,12 +62,12 @@ class ShakespeareDataset(Dataset):
     def __init__(self, text, tokenizer, block_size=128, train_test_split=0.9):
         self.tokenizer = tokenizer
         self.block_size = block_size
-        self.data = tokenizer.encode(text)
+        self.data = tokenizer.encode(text).to(device)
 
         size = len(self.data)
         train_size = int(size * train_test_split)
-        self.train_data = torch.tensor(self.data[:train_size], dtype=torch.long)
-        self.test_data = torch.tensor(self.data[train_size:], dtype=torch.long)
+        self.train_data = self.data[:train_size]
+        self.test_data = self.data[train_size:]
 
     def get_test_data(self, batch_size=64) -> Tuple[torch.Tensor, torch.Tensor]:
         indices = torch.randperm(len(self.test_data))[:batch_size]
@@ -86,13 +89,12 @@ class ShakespeareDataset(Dataset):
 class BigramLanguageModel(nn.Module):
     def __init__(self, vocab_size):
         super().__init__()
-        self.embed = nn.Embedding(vocab_size, vocab_size)
+        self.embed = nn.Embedding(vocab_size, vocab_size).to(device)
 
     def forward(self, x, y=None):
         logits = self.embed(x)
         B, T, C = logits.shape
         logits = logits.view(B * T, C)
-        print(f"logits: {logits.shape} {logits} y: {y.shape} {y}")
         if y is not None:
             y = y.view(B * T)
             loss = F.cross_entropy(logits, y, ignore_index=-1)
@@ -106,7 +108,4 @@ if __name__ == "__main__":
     dataset = ShakespeareDataset(download_shakespeare(), tokenizer)
     model = BigramLanguageModel(vocab_size)
     x, y = dataset.get_train_data(batch_size=64)
-    print(f"x: {x.shape} {x} y: {y.shape} {y}")
     logits, loss = model(x, y)
-    print(f"loss: {loss}")
-    print(f"logits: {logits.shape} y: {y.shape}")
