@@ -1,8 +1,10 @@
 import requests
 import os
 import torch
+import torch.nn as nn
+from torch.nn import functional as F
 from torch.utils.data import Dataset
-from torch.utils.data import Subset
+from typing import Tuple
 
 
 def test_encode_decode():
@@ -54,36 +56,54 @@ class CharTokenizer:
 class ShakespeareDataset(Dataset):
     """Dataset for autoregressive language modeling"""
 
-    def __init__(self, text, tokenizer, block_size=128):
+    def __init__(self, text, tokenizer, block_size=128, train_test_split=0.9):
         self.tokenizer = tokenizer
         self.block_size = block_size
         self.data = tokenizer.encode(text)
 
-    def __len__(self):
-        return len(self.data) - self.block_size
+        size = len(self.data)
+        train_size = int(size * train_test_split)
+        self.train_data = torch.tensor(self.data[:train_size], dtype=torch.long)
+        self.test_data = torch.tensor(self.data[train_size:], dtype=torch.long)
 
-    def train_test_split(self, test_size=0.1):
-        size = len(self)
-        test = Subset(self, range(int(size * test_size)))
-        train = Subset(self, range(int(size * test_size), size))
-        return train, test
-
-    def __getitem__(self, idx):
-        # Input sequence and target (shifted by 1)
-        x = self.data[idx : idx + self.block_size]
-        y = self.data[idx + 1 : idx + self.block_size + 1]
+    def get_test_data(self, batch_size=64) -> Tuple[torch.Tensor, torch.Tensor]:
+        indices = torch.randperm(len(self.test_data))[:batch_size]
+        x = torch.stack([self.test_data[i : i + self.block_size] for i in indices])
+        y = torch.stack(
+            [self.test_data[i + 1 : i + self.block_size + 1] for i in indices]
+        )
         return x, y
+
+    def get_train_data(self, batch_size=64) -> Tuple[torch.Tensor, torch.Tensor]:
+        indices = torch.randperm(len(self.train_data))[:batch_size]
+        x = torch.stack([self.train_data[i : i + self.block_size] for i in indices])
+        y = torch.stack(
+            [self.train_data[i + 1 : i + self.block_size + 1] for i in indices]
+        )
+        return x, y
+
+
+class BigramLanguageModel(nn.Module):
+    def __init__(self, vocab_size):
+        super().__init__()
+        self.embed = nn.Embedding(vocab_size, vocab_size)
+
+    def forward(self, x, y=None):
+        logits = self.embed(x)
+        print(f"logits: {logits.shape} {logits}")
+        if y is not None:
+            loss = F.cross_entropy(logits, y)
+            return logits, loss
+        return logits, None
 
 
 if __name__ == "__main__":
     tokenizer = CharTokenizer(download_shakespeare())
+    vocab_size = tokenizer.vocab_size
     dataset = ShakespeareDataset(download_shakespeare(), tokenizer)
-    train, test = dataset.train_test_split(test_size=0.1)
-    print(f"train: {len(train)}")
-    print(f"test: {len(test)}")
-    for x, y in train:
-        print(f"x: {x.shape} y: {y.shape}")
-        break
-    for x, y in test:
-        print(f"x: {x.shape} y: {y.shape}")
-        break
+    model = BigramLanguageModel(vocab_size)
+    x, y = dataset.get_train_data(batch_size=64)
+    print(f"x: {x.shape} {x} y: {y.shape} {y}")
+    logits, loss = model(x, y)
+    print(f"loss: {loss}")
+    print(f"logits: {logits.shape} y: {y.shape}")
