@@ -70,7 +70,7 @@ class ShakespeareDataset(Dataset):
         self.test_data = self.data[train_size:]
 
     def get_test_data(self, batch_size=64) -> Tuple[torch.Tensor, torch.Tensor]:
-        indices = torch.randperm(len(self.test_data))[:batch_size]
+        indices = torch.randperm(len(self.test_data) - self.block_size)[:batch_size]
         x = torch.stack([self.test_data[i : i + self.block_size] for i in indices])
         y = torch.stack(
             [self.test_data[i + 1 : i + self.block_size + 1] for i in indices]
@@ -78,7 +78,7 @@ class ShakespeareDataset(Dataset):
         return x, y
 
     def get_train_data(self, batch_size=64) -> Tuple[torch.Tensor, torch.Tensor]:
-        indices = torch.randperm(len(self.train_data))[:batch_size]
+        indices = torch.randperm(len(self.train_data) - self.block_size)[:batch_size]
         x = torch.stack([self.train_data[i : i + self.block_size] for i in indices])
         y = torch.stack(
             [self.train_data[i + 1 : i + self.block_size + 1] for i in indices]
@@ -107,5 +107,15 @@ if __name__ == "__main__":
     vocab_size = tokenizer.vocab_size
     dataset = ShakespeareDataset(download_shakespeare(), tokenizer)
     model = BigramLanguageModel(vocab_size)
-    x, y = dataset.get_train_data(batch_size=64)
-    logits, loss = model(x, y)
+    optimizer = torch.optim.AdamW(model.parameters(), lr=1e-3)
+    for epoch in range(10000):
+        x, y = dataset.get_train_data(batch_size=64)
+        x = x.to(device)
+        y = y.to(device)
+        logits, loss = model(x, y)
+        optimizer.zero_grad()
+        loss.backward()
+        torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+        optimizer.step()
+        if epoch % 100 == 0:
+            print(f"Epoch {epoch}, Loss: {loss.item()}")
