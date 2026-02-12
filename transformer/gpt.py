@@ -93,13 +93,23 @@ class BigramLanguageModel(nn.Module):
 
     def forward(self, x, y=None):
         logits = self.embed(x)
-        B, T, C = logits.shape
-        logits = logits.view(B * T, C)
+        loss = None
         if y is not None:
+            B, T, C = logits.shape
+            logits = logits.view(B * T, C)
             y = y.view(B * T)
             loss = F.cross_entropy(logits, y, ignore_index=-1)
-            return logits, loss
-        return logits, None
+        return logits, loss
+
+    @torch.no_grad()
+    def generate(self, context, max_new_tokens=50):
+        for _ in range(max_new_tokens):
+            logits, loss = self(context)
+            logits = logits[:, -1, :]
+            probs = F.softmax(logits, dim=-1)
+            next_token = torch.multinomial(probs, num_samples=1)
+            context = torch.cat([context, next_token], dim=1)
+        return context
 
 
 if __name__ == "__main__":
@@ -117,5 +127,8 @@ if __name__ == "__main__":
         loss.backward()
         torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
         optimizer.step()
-        if epoch % 100 == 0:
+        if epoch % 1000 == 0:
             print(f"Epoch {epoch}, Loss: {loss.item()}")
+
+    context = torch.zeros((1, 1), dtype=torch.long, device=device)
+    print(tokenizer.decode(model.generate(context, max_new_tokens=100)[0].tolist()))
