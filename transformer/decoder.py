@@ -71,6 +71,7 @@ class PositionalEncoding(nn.Module):
         
         # Create positional encoding matrix
         pe = torch.zeros(max_len, d_model)
+        print(f"PE shape 1: {pe.shape}") 
         position = torch.arange(0, max_len, dtype=torch.float).unsqueeze(1)
         div_term = torch.exp(torch.arange(0, d_model, 2).float() * 
                             (-math.log(10000.0) / d_model))
@@ -78,7 +79,7 @@ class PositionalEncoding(nn.Module):
         pe[:, 0::2] = torch.sin(position * div_term)
         pe[:, 1::2] = torch.cos(position * div_term)
         pe = pe.unsqueeze(0)  # (1, max_len, d_model)
-        
+        print(f"PE shape 2: {pe.shape}") 
         self.register_buffer('pe', pe)
     
     def forward(self, x):
@@ -95,6 +96,8 @@ class DecoderLM(nn.Module):
         self.d_model = d_model
         self.embed = nn.Embedding(vocab_size, d_model)
         self.pos_enc = PositionalEncoding(d_model, max_len=max_len, dropout=dropout)
+        print(f"PE shape: {self.pos_enc.pe.shape}")
+        
         self.decoder = TransformerDecoder(decoder_layer, num_layers=num_layers, norm=nn.LayerNorm(d_model))
         self.lm_head = nn.Linear(d_model, vocab_size, bias=False)
 
@@ -122,11 +125,14 @@ class DecoderLM(nn.Module):
     def generate(self, input_ids, max_new_tokens=200, temperature=0.8, top_k=40):
         for _ in range(max_new_tokens):
             T = input_ids.size(1)
-            h = self.pos_enc(self.embed(input_ids))
+
+            input_embed = self.embed(input_ids)
+            h = self.pos_enc(input_embed)
             h = h.transpose(0, 1)
             causal_mask = self._causal_mask(T, input_ids.device)
             out = self.decoder(h, h, tgt_mask=causal_mask, memory_mask=None)
             logits = self.lm_head(out[-1:])  # (1, N, vocab_size)
+            print(f"logits: {logits.shape}")
             logits = logits.squeeze(0) / max(temperature, 1e-8)
             if top_k is not None and top_k > 0:
                 v, _ = torch.topk(logits, min(top_k, logits.size(-1)))
@@ -300,7 +306,8 @@ def main():
     for prompt in prompts:
         print(f"\nPrompt: '{prompt}'")
         print("-" * 40)
-        
+
+        print(f"Encoded prompt: {tokenizer.encode(prompt)}") 
         # Encode prompt
         input_ids = torch.tensor([tokenizer.encode(prompt)], device=device)
         print(f"input_ids: {input_ids.shape}")
@@ -308,7 +315,7 @@ def main():
         # Generate
         output_ids = model.generate(
             input_ids,
-            max_new_tokens=200,
+            max_new_tokens=50,
             temperature=0.8,
             top_k=40
         )
