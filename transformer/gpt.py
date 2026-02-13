@@ -88,7 +88,6 @@ class ShakespeareDataset(Dataset):
         return x, y
 
 
-
 class PositionalEncoding(nn.Module):
     def __init__(self, d_model, max_len=5000, dropout=0.1):
         super().__init__()
@@ -98,23 +97,34 @@ class PositionalEncoding(nn.Module):
         pe = torch.zeros(max_len, d_model).to(device)
         position = torch.arange(0, max_len, dtype=torch.float).unsqueeze(1)
         # Apply the log-space calculation for numerical stability
-        div_term = torch.exp(torch.arange(0, d_model, 2).float() * (-math.log(10000.0) / d_model))
+        div_term = torch.exp(
+            torch.arange(0, d_model, 2).float() * (-math.log(10000.0) / d_model)
+        )
 
         pe[:, 0::2] = torch.sin(position * div_term)
         pe[:, 1::2] = torch.cos(position * div_term)
         pe = pe.unsqueeze(0)  # (1, max_len, d_model)
 
-        self.register_buffer('pe', pe)
+        self.register_buffer("pe", pe)
 
     def forward(self, x):
         # x: (batch_size, seq_len, d_model)
         # Add positional encoding to input embedding
-        x = x + self.pe[:, :x.size(1)]
+        x = x + self.pe[:, : x.size(1)]
         return self.dropout(x)
 
 
 class GPTLanguageModel(nn.Module):
-    def __init__(self, vocab_size, d_model=16, num_heads=2, num_layers=2, dropout=0.1, block_size=128, max_len=5000):
+    def __init__(
+        self,
+        vocab_size,
+        d_model=16,
+        num_heads=2,
+        num_layers=2,
+        dropout=0.1,
+        block_size=128,
+        max_len=5000,
+    ):
         super().__init__()
         self.d_model = d_model
         self.num_heads = num_heads
