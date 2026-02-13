@@ -112,6 +112,18 @@ class BigramLanguageModel(nn.Module):
         return context
 
 
+@torch.no_grad()
+def estimate_loss(model, dataset, eval_iters=10):
+    model.eval()
+    losses = torch.zeros(eval_iters)
+    for k in range(eval_iters):
+        X, Y = dataset.get_test_data(batch_size=64)
+        logits, loss = model(X, Y)
+        losses[k] = loss.item()
+    model.train()
+    return losses.mean().item()
+
+
 if __name__ == "__main__":
     tokenizer = CharTokenizer(download_shakespeare())
     vocab_size = tokenizer.vocab_size
@@ -128,7 +140,7 @@ if __name__ == "__main__":
         torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
         optimizer.step()
         if epoch % 1000 == 0:
-            print(f"Epoch {epoch}, Loss: {loss.item()}")
-
+            loss = estimate_loss(model, dataset, eval_iters=10)
+            print(f"Epoch {epoch}, Loss: {loss}")
     context = torch.zeros((1, 1), dtype=torch.long, device=device)
-    print(tokenizer.decode(model.generate(context, max_new_tokens=100)[0].tolist()))
+    print(tokenizer.decode(model.generate(context, max_new_tokens=500)[0].tolist()))
