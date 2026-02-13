@@ -8,6 +8,7 @@ dependencies = [
     "gymnasium[box2d,classic-control]>=1.2.3",
     "numpy>=2.4.0",
     "pygame-ce>=2.5.6",
+    "ruff>=0.15.0",
     "scikit-learn>=1.8.0",
     "stable-baselines3>=2.7.1",
     "swig>=4.4.1",
