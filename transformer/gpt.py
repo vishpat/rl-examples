@@ -113,7 +113,7 @@ class PositionalEncoding(nn.Module):
         return self.dropout(x)
 
 
-class Head(nn.Module):
+class Attention(nn.Module):
     def __init__(self, head_size, d_model, decoder=True):
         super().__init__()
         self.head_size = head_size
@@ -139,7 +139,9 @@ class Head(nn.Module):
 class MultiHeadAttention(nn.Module):
     def __init__(self, num_heads, head_size, d_model):
         super().__init__()
-        self.heads = nn.ModuleList([Head(head_size, d_model) for _ in range(num_heads)])
+        self.heads = nn.ModuleList(
+            [Attention(head_size, d_model) for _ in range(num_heads)]
+        )
         self.proj = nn.Linear(d_model, d_model)
 
     def forward(self, x):
@@ -177,7 +179,7 @@ class GPTLanguageModel(nn.Module):
         self.embed = nn.Embedding(vocab_size, d_model).to(device)
         self.pos_encoding = PositionalEncoding(d_model, max_len, dropout)
         self.lm_head = nn.Linear(d_model, vocab_size).to(device)
-        self.single_head_attention = Head(max_len, d_model)
+        self.single_head_attention = Attention(max_len, d_model)
 
     def forward(self, x, y=None):
         embed = self.embed(x)
