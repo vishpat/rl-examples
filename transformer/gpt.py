@@ -112,6 +112,7 @@ class PositionalEncoding(nn.Module):
         x = x + self.pe[:, : x.size(1)]
         return self.dropout(x)
 
+
 class Head(nn.Module):
     def __init__(self, head_size, d_model):
         super().__init__()
@@ -125,6 +126,7 @@ class Head(nn.Module):
         key = self.key(x)
         value = self.value(x)
         return query, key, value
+
 
 class GPTLanguageModel(nn.Module):
     def __init__(
