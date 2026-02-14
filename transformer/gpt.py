@@ -88,13 +88,13 @@ class ShakespeareDataset(Dataset):
 
 
 class PositionalEncoding(nn.Module):
-    def __init__(self, d_model, max_len=5000, dropout=0.1):
+    def __init__(self, d_model, block_size=128, dropout=0.1):
         super().__init__()
         self.dropout = nn.Dropout(p=dropout)
 
         # Create positional encoding matrix
-        pe = torch.zeros(max_len, d_model).to(device)
-        position = torch.arange(0, max_len, dtype=torch.float).unsqueeze(1)
+        pe = torch.zeros(block_size, d_model).to(device)
+        position = torch.arange(0, block_size, dtype=torch.float).unsqueeze(1)
         # Apply the log-space calculation for numerical stability
         div_term = torch.exp(
             torch.arange(0, d_model, 2).float() * (-math.log(10000.0) / d_model)
@@ -102,7 +102,7 @@ class PositionalEncoding(nn.Module):
 
         pe[:, 0::2] = torch.sin(position * div_term)
         pe[:, 1::2] = torch.cos(position * div_term)
-        pe = pe.unsqueeze(0)  # (1, max_len, d_model)
+        pe = pe.unsqueeze(0)  # (1, block_size, d_model)
 
         self.register_buffer("pe", pe)
 
@@ -167,7 +167,6 @@ class GPTLanguageModel(nn.Module):
         num_layers=2,
         dropout=0.1,
         block_size=128,
-        max_len=5000,
     ):
         super().__init__()
         self.d_model = d_model
@@ -175,11 +174,10 @@ class GPTLanguageModel(nn.Module):
         self.num_layers = num_layers
         self.dropout = dropout
         self.block_size = block_size
-        self.max_len = max_len
         self.embed = nn.Embedding(vocab_size, d_model).to(device)
-        self.pos_encoding = PositionalEncoding(d_model, max_len, dropout)
+        self.pos_encoding = PositionalEncoding(d_model, block_size, dropout)
         self.lm_head = nn.Linear(d_model, vocab_size).to(device)
-        self.single_head_attention = Attention(max_len, d_model)
+        self.single_head_attention = Attention(block_size, d_model)
 
     def forward(self, x, y=None):
         embed = self.embed(x)
@@ -236,4 +234,4 @@ if __name__ == "__main__":
             loss = estimate_loss(model, dataset, eval_iters=10)
             print(f"Epoch {epoch}, Loss: {loss}")
     context = torch.zeros((1, 1), dtype=torch.long, device=device)
-    print(tokenizer.decode(model.generate(context, max_new_tokens=500)[0].tolist()))
+    print(tokenizer.decode(model.generate(context, max_new_tokens=100)[0].tolist()))
