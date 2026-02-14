@@ -124,8 +124,13 @@ class Head(nn.Module):
         B, T, C = x.shape
         query = self.query(x)
         key = self.key(x)
+        weights = query @ key.transpose(-2, -1) / math.sqrt(head_size)
+        triu_mask = torch.triu(torch.ones(T, T), diagonal=1)
+        weights = weights.masked_fill(triu_mask == 1, float("-inf"))
+        weights = F.softmax(weights, dim=-1)
         value = self.value(x)
-        return query, key, value
+        output = weights @ value
+        return output
 
 
 class GPTLanguageModel(nn.Module):
