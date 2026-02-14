@@ -210,7 +210,10 @@ class GPTLanguageModel(nn.Module):
     def forward(self, x, y=None):
         embed = self.embed(x)
         embed = self.pos_encoding(embed)
-        logits = self.single_head_attention(embed)
+        attention_output = self.single_head_attention(embed)
+        print(f"attention_output: {attention_output.shape}")
+        logits = self.lm_head(attention_output)
+        print(f"logits: {logits.shape}")
         loss = None
         if y is not None:
             B, T, C = logits.shape
