@@ -10,6 +10,11 @@ from typing import Tuple
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print(f"Using device: {device}")
 
+BATCH_SIZE = 4
+SEQ_LEN = 32
+N_HEADS = 1
+D_MODEL = 16
+
 
 def test_encode_decode():
     text = "Hello, world! This is a test."
@@ -60,7 +65,7 @@ class CharTokenizer:
 class ShakespeareDataset(Dataset):
     """Dataset for autoregressive language modeling"""
 
-    def __init__(self, text, tokenizer, block_size=128, train_test_split=0.9):
+    def __init__(self, text, tokenizer, block_size=SEQ_LEN, train_test_split=0.9):
         self.tokenizer = tokenizer
         self.block_size = block_size
         self.data = tokenizer.encode(text).to(device)
@@ -88,7 +93,7 @@ class ShakespeareDataset(Dataset):
 
 
 class PositionalEncoding(nn.Module):
-    def __init__(self, d_model, block_size=128, dropout=0.1):
+    def __init__(self, d_model, block_size=SEQ_LEN, dropout=0.1):
         super().__init__()
         self.dropout = nn.Dropout(p=dropout)
 
@@ -114,25 +119,43 @@ class PositionalEncoding(nn.Module):
 
 
 class Attention(nn.Module):
-    def __init__(self, head_size, d_model, decoder=True):
+    def __init__(self, head_size, d_model, block_size, dropout=0.1, decoder=True):
         super().__init__()
         self.head_size = head_size
         self.decoder = decoder
         self.query = nn.Linear(d_model, head_size).to(device)
+        print(f"query matrix: {self.query.weight.shape}")
         self.key = nn.Linear(d_model, head_size).to(device)
+        print(f"key matrix: {self.key.weight.shape}")
         self.value = nn.Linear(d_model, head_size).to(device)
+        print(f"value matrix: {self.value.weight.shape}")
+        self.register_buffer(
+            "triu_mask",
+            torch.triu(torch.ones(block_size, block_size), diagonal=1).to(device),
+        )
+        self.dropout = nn.Dropout(p=dropout)
+        self.scale = math.sqrt(self.head_size)
 
     def forward(self, x):
         B, T, C = x.shape
+        print(f"x: {x.shape}")
         query = self.query(x)
         key = self.key(x)
-        weights = query @ key.transpose(-2, -1) / math.sqrt(self.head_size)
-        triu_mask = torch.triu(torch.ones(T, T), diagonal=1).to(device)
+        print(f"query: {query.shape}")
+        print(f"key: {key.shape}")
+        weights = query @ key.transpose(-2, -1) / self.scale
+        print(f"weights: {weights.shape}")
         if self.decoder:
-            weights = weights.masked_fill(triu_mask == 1, float("-inf")).to(device)
+            weights = weights.masked_fill(
+                self.triu_mask[:T, :T] == 1, float("-inf")
+            ).to(device)
         weights = F.softmax(weights, dim=-1)
+        weights = self.dropout(weights)
+        print(f"weights: {weights.shape}")
         value = self.value(x)
+        print(f"value: {value.shape}")
         output = weights @ value
+        print(f"output: {output.shape}")
         return output
 
 
@@ -162,11 +185,11 @@ class GPTLanguageModel(nn.Module):
     def __init__(
         self,
         vocab_size,
-        d_model=16,
-        num_heads=2,
+        d_model=D_MODEL,
+        num_heads=N_HEADS,
         num_layers=2,
         dropout=0.1,
-        block_size=128,
+        block_size=SEQ_LEN,
     ):
         super().__init__()
         self.d_model = d_model
@@ -177,7 +200,12 @@ class GPTLanguageModel(nn.Module):
         self.embed = nn.Embedding(vocab_size, d_model).to(device)
         self.pos_encoding = PositionalEncoding(d_model, block_size, dropout)
         self.lm_head = nn.Linear(d_model, vocab_size).to(device)
-        self.single_head_attention = Attention(block_size, d_model)
+        self.single_head_attention = Attention(
+            head_size=d_model // num_heads,
+            d_model=d_model,
+            block_size=block_size,
+            dropout=dropout,
+        )
 
     def forward(self, x, y=None):
         embed = self.embed(x)
@@ -207,7 +235,7 @@ def estimate_loss(model, dataset, eval_iters=10):
     model.eval()
     losses = torch.zeros(eval_iters)
     for k in range(eval_iters):
-        X, Y = dataset.get_test_data(batch_size=64)
+        X, Y = dataset.get_test_data(batch_size=BATCH_SIZE)
         logits, loss = model(X, Y)
         losses[k] = loss.item()
     model.train()
@@ -222,7 +250,7 @@ if __name__ == "__main__":
     model = GPTLanguageModel(vocab_size)
     optimizer = torch.optim.AdamW(model.parameters(), lr=1e-3)
     for epoch in range(10000):
-        x, y = dataset.get_train_data(batch_size=64)
+        x, y = dataset.get_train_data(batch_size=BATCH_SIZE)
         x = x.to(device)
         y = y.to(device)
         logits, loss = model(x, y)
