@@ -6,28 +6,33 @@ import torch.nn as nn
 from torch.nn import functional as F
 from torch.utils.data import Dataset
 from typing import Tuple
+import logging
+
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
+logger.addHandler(logging.StreamHandler())
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-print(f"Using device: {device}")
+logger.debug(f"Using device: {device}")
 
-BATCH_SIZE = 4
-SEQ_LEN = 32
-N_HEADS = 1
-D_MODEL = 16
+BATCH_SIZE = 128
+SEQ_LEN = 256
+N_HEADS = 8
+D_MODEL = 256
 
 
 def test_encode_decode():
     text = "Hello, world! This is a test."
     tokenizer = CharTokenizer(text)
-    print(f"tokenizer: {tokenizer.vocab_size}")
+    logger.debug(f"tokenizer: {tokenizer.vocab_size}")
     text = text.lower()
-    print(f"text: {text}")
+    logger.debug(f"text: {text}")
     encoded = tokenizer.encode(text)
-    print(f"encoded: {encoded} {encoded.shape}")
+    logger.debug(f"encoded: {encoded} {encoded.shape}")
     decoded = tokenizer.decode(encoded)
-    print(f"decoded: {decoded}")
+    logger.debug(f"decoded: {decoded}")
     assert decoded == text, f"decoded: {decoded} != text: {text}"
-    print("test_encode_decode passed")
+    logger.debug("test_encode_decode passed")
 
 
 def download_shakespeare():
@@ -35,7 +40,7 @@ def download_shakespeare():
     url = "https://raw.githubusercontent.com/karpathy/char-rnn/master/data/tinyshakespeare/input.txt"
 
     if not os.path.exists("shakespeare.txt"):
-        print("Downloading Shakespeare dataset...")
+        logger.debug("Downloading Shakespeare dataset...")
         response = requests.get(url)
         with open("shakespeare.txt", "w") as f:
             f.write(response.text)
@@ -124,11 +129,11 @@ class Attention(nn.Module):
         self.d_k = d_k
         self.decoder = decoder
         self.query = nn.Linear(d_model, d_k).to(device)
-        print(f"query matrix: {self.query.weight.shape}")
+        logger.debug(f"query matrix: {self.query.weight.shape}")
         self.key = nn.Linear(d_model, d_k).to(device)
-        print(f"key matrix: {self.key.weight.shape}")
+        logger.debug(f"key matrix: {self.key.weight.shape}")
         self.value = nn.Linear(d_model, d_k).to(device)
-        print(f"value matrix: {self.value.weight.shape}")
+        logger.debug(f"value matrix: {self.value.weight.shape}")
         self.register_buffer(
             "triu_mask",
             torch.triu(torch.ones(block_size, block_size), diagonal=1).to(device),
@@ -138,24 +143,24 @@ class Attention(nn.Module):
 
     def forward(self, x):
         B, T, C = x.shape
-        print(f"x: {x.shape}")
+        logger.debug(f"x: {x.shape}")
         query = self.query(x)
         key = self.key(x)
-        print(f"query: {query.shape}")
-        print(f"key: {key.shape}")
+        logger.debug(f"query: {query.shape}")
+        logger.debug(f"key: {key.shape}")
         weights = query @ key.transpose(-2, -1) / self.scale
-        print(f"weights: {weights.shape}")
+        logger.debug(f"weights: {weights.shape}")
         if self.decoder:
             weights = weights.masked_fill(
                 self.triu_mask[:T, :T] == 1, float("-inf")
             ).to(device)
         weights = F.softmax(weights, dim=-1)
         weights = self.dropout(weights)
-        print(f"weights: {weights.shape}")
+        logger.debug(f"weights: {weights.shape}")
         value = self.value(x)
-        print(f"value: {value.shape}")
+        logger.debug(f"value: {value.shape}")
         output = weights @ value
-        print(f"output: {output.shape}")
+        logger.debug(f"output: {output.shape}")
         return output
 
 
@@ -299,7 +304,7 @@ def estimate_loss(model, dataset, eval_iters=10):
 if __name__ == "__main__":
     tokenizer = CharTokenizer(download_shakespeare())
     vocab_size = tokenizer.vocab_size
-    print(f"vocab_size: {vocab_size}")
+    logger.debug(f"vocab_size: {vocab_size}")
     dataset = ShakespeareDataset(download_shakespeare(), tokenizer)
     model = GPTLanguageModel(vocab_size)
     optimizer = torch.optim.AdamW(model.parameters(), lr=1e-3)
@@ -314,6 +319,10 @@ if __name__ == "__main__":
         optimizer.step()
         if epoch % 1000 == 0:
             loss = estimate_loss(model, dataset, eval_iters=10)
-            print(f"Epoch {epoch}, Loss: {loss}")
+            logger.info(f"Epoch {epoch}, Loss: {loss}")
     context = torch.zeros((1, 1), dtype=torch.long, device=device)
-    print(tokenizer.decode(model.generate(context, max_new_tokens=100)[0].tolist()))
+    logger.info(
+        tokenizer.decode(
+            model.generate(context, max_new_tokens=SEQ_LEN - 1)[0].tolist()
+        )
+    )
