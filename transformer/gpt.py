@@ -117,21 +117,41 @@ class Head(nn.Module):
     def __init__(self, head_size, d_model):
         super().__init__()
         self.head_size = head_size
-        self.query = nn.Linear(d_model, head_size)
-        self.key = nn.Linear(d_model, head_size)
-        self.value = nn.Linear(d_model, head_size)
+        self.query = nn.Linear(d_model, head_size).to(device)
+        self.key = nn.Linear(d_model, head_size).to(device)
+        self.value = nn.Linear(d_model, head_size).to(device)
 
     def forward(self, x):
         B, T, C = x.shape
         query = self.query(x)
         key = self.key(x)
         weights = query @ key.transpose(-2, -1) / math.sqrt(self.head_size)
-        triu_mask = torch.triu(torch.ones(T, T), diagonal=1)
-        weights = weights.masked_fill(triu_mask == 1, float("-inf"))
+        triu_mask = torch.triu(torch.ones(T, T), diagonal=1).to(device)
+        weights = weights.masked_fill(triu_mask == 1, float("-inf")).to(device)
         weights = F.softmax(weights, dim=-1)
         value = self.value(x)
         output = weights @ value
         return output
+
+
+class MultiHeadAttention(nn.Module):
+    def __init__(self, num_heads, head_size, d_model):
+        super().__init__()
+        self.heads = nn.ModuleList([Head(head_size, d_model) for _ in range(num_heads)])
+        self.proj = nn.Linear(d_model, d_model)
+
+    def forward(self, x):
+        return self.proj(torch.cat([head(x) for head in self.heads], dim=-1))
+
+
+class FeedForward(nn.Module):
+    def __init__(self, d_model, d_ff):
+        super().__init__()
+        self.net = nn.Sequential(
+            nn.Linear(d_model, d_ff),
+            nn.ReLU(),
+            nn.Linear(d_ff, d_model),
+        )
 
 
 class GPTLanguageModel(nn.Module):
@@ -155,11 +175,12 @@ class GPTLanguageModel(nn.Module):
         self.embed = nn.Embedding(vocab_size, d_model).to(device)
         self.pos_encoding = PositionalEncoding(d_model, max_len, dropout)
         self.lm_head = nn.Linear(d_model, vocab_size).to(device)
+        self.single_head_attention = Head(max_len, d_model)
 
     def forward(self, x, y=None):
         embed = self.embed(x)
         embed = self.pos_encoding(embed)
-        logits = self.lm_head(embed)
+        logits = self.single_head_attention(embed)
         loss = None
         if y is not None:
             B, T, C = logits.shape
