@@ -114,9 +114,10 @@ class PositionalEncoding(nn.Module):
 
 
 class Head(nn.Module):
-    def __init__(self, head_size, d_model):
+    def __init__(self, head_size, d_model, decoder=True):
         super().__init__()
         self.head_size = head_size
+        self.decoder = decoder
         self.query = nn.Linear(d_model, head_size).to(device)
         self.key = nn.Linear(d_model, head_size).to(device)
         self.value = nn.Linear(d_model, head_size).to(device)
@@ -127,7 +128,8 @@ class Head(nn.Module):
         key = self.key(x)
         weights = query @ key.transpose(-2, -1) / math.sqrt(self.head_size)
         triu_mask = torch.triu(torch.ones(T, T), diagonal=1).to(device)
-        weights = weights.masked_fill(triu_mask == 1, float("-inf")).to(device)
+        if self.decoder:
+            weights = weights.masked_fill(triu_mask == 1, float("-inf")).to(device)
         weights = F.softmax(weights, dim=-1)
         value = self.value(x)
         output = weights @ value
