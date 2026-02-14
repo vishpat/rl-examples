@@ -119,22 +119,22 @@ class PositionalEncoding(nn.Module):
 
 
 class Attention(nn.Module):
-    def __init__(self, head_size, d_model, block_size, dropout=0.1, decoder=True):
+    def __init__(self, d_k, d_model, block_size, dropout=0.1, decoder=True):
         super().__init__()
-        self.head_size = head_size
+        self.d_k = d_k
         self.decoder = decoder
-        self.query = nn.Linear(d_model, head_size).to(device)
+        self.query = nn.Linear(d_model, d_k).to(device)
         print(f"query matrix: {self.query.weight.shape}")
-        self.key = nn.Linear(d_model, head_size).to(device)
+        self.key = nn.Linear(d_model, d_k).to(device)
         print(f"key matrix: {self.key.weight.shape}")
-        self.value = nn.Linear(d_model, head_size).to(device)
+        self.value = nn.Linear(d_model, d_k).to(device)
         print(f"value matrix: {self.value.weight.shape}")
         self.register_buffer(
             "triu_mask",
             torch.triu(torch.ones(block_size, block_size), diagonal=1).to(device),
         )
         self.dropout = nn.Dropout(p=dropout)
-        self.scale = math.sqrt(self.head_size)
+        self.scale = math.sqrt(self.d_k)
 
     def forward(self, x):
         B, T, C = x.shape
@@ -160,15 +160,22 @@ class Attention(nn.Module):
 
 
 class MultiHeadAttention(nn.Module):
-    def __init__(self, num_heads, head_size, d_model):
+    def __init__(self, num_heads, d_k, d_model, block_size, dropout=0.1):
         super().__init__()
+        self.num_heads = num_heads
+        self.d_k = d_k
+        self.d_model = d_model
         self.heads = nn.ModuleList(
-            [Attention(head_size, d_model) for _ in range(num_heads)]
+            [Attention(d_k, d_model, block_size, dropout) for _ in range(num_heads)]
         )
-        self.proj = nn.Linear(d_model, d_model)
+        self.scale = math.sqrt(self.d_k)
+        self.proj = nn.Linear(d_model, d_model).to(device)
+        self.dropout = nn.Dropout(p=dropout)
 
     def forward(self, x):
-        return self.proj(torch.cat([head(x) for head in self.heads], dim=-1))
+        return self.dropout(
+            self.proj(torch.cat([head(x) for head in self.heads], dim=-1))
+        )
 
 
 class FeedForward(nn.Module):
@@ -178,7 +185,40 @@ class FeedForward(nn.Module):
             nn.Linear(d_model, d_ff),
             nn.ReLU(),
             nn.Linear(d_ff, d_model),
+        ).to(device)
+        self._init_weights()
+
+    def forward(self, x):
+        return self.net(x)
+
+    def _init_weights(self):
+        """Initialize weights using Xavier uniform initialization."""
+        for p in self.parameters():
+            if p.dim() > 1:
+                nn.init.xavier_uniform_(p)
+
+
+class DecoderBlock(nn.Module):
+    def __init__(self, d_model, num_heads, d_ff, block_size, dropout=0.1):
+        super().__init__()
+        d_k = d_model // num_heads
+        self.attention = MultiHeadAttention(
+            num_heads, d_k, d_model, block_size, dropout
         )
+        self.feed_forward = FeedForward(d_model, d_ff)
+        self.norm1 = nn.LayerNorm(d_model).to(device)
+        self.norm2 = nn.LayerNorm(d_model).to(device)
+        self.dropout1 = nn.Dropout(p=dropout).to(device)
+        self.dropout2 = nn.Dropout(p=dropout).to(device)
+
+    def forward(self, x):
+        x = self.attention(x) + x
+        x = self.norm1(x)
+        x = self.dropout1(x)
+        x = self.feed_forward(x) + x
+        x = self.norm2(x)
+        x = self.dropout2(x)
+        return x
 
 
 class GPTLanguageModel(nn.Module):
@@ -199,21 +239,32 @@ class GPTLanguageModel(nn.Module):
         self.block_size = block_size
         self.embed = nn.Embedding(vocab_size, d_model).to(device)
         self.pos_encoding = PositionalEncoding(d_model, block_size, dropout)
-        self.lm_head = nn.Linear(d_model, vocab_size).to(device)
-        self.single_head_attention = Attention(
-            head_size=d_model // num_heads,
-            d_model=d_model,
-            block_size=block_size,
-            dropout=dropout,
+        self.blocks = nn.Sequential(
+            *[
+                DecoderBlock(d_model, num_heads, d_model * 4, block_size, dropout)
+                for _ in range(num_layers)
+            ]
         )
+        self.norm = nn.LayerNorm(d_model).to(device)
+        self.lm_head = nn.Linear(d_model, vocab_size).to(device)
+        self._init_weights()
+
+    def _init_weights(self):
+        """Initialize weights using Xavier uniform initialization."""
+        for p in self.parameters():
+            if p.dim() > 1:
+                nn.init.xavier_uniform_(p)
+        for p in self.blocks.parameters():
+            if p.dim() > 1:
+                nn.init.xavier_uniform_(p)
+        nn.init.xavier_uniform_(self.lm_head.weight)
 
     def forward(self, x, y=None):
         embed = self.embed(x)
         embed = self.pos_encoding(embed)
-        attention_output = self.single_head_attention(embed)
-        print(f"attention_output: {attention_output.shape}")
-        logits = self.lm_head(attention_output)
-        print(f"logits: {logits.shape}")
+        x = self.blocks(embed)
+        x = self.norm(x)
+        logits = self.lm_head(x)
         loss = None
         if y is not None:
             B, T, C = logits.shape
