@@ -116,6 +116,7 @@ class PositionalEncoding(nn.Module):
 class Head(nn.Module):
     def __init__(self, head_size, d_model):
         super().__init__()
+        self.head_size = head_size
         self.query = nn.Linear(d_model, head_size)
         self.key = nn.Linear(d_model, head_size)
         self.value = nn.Linear(d_model, head_size)
@@ -124,7 +125,7 @@ class Head(nn.Module):
         B, T, C = x.shape
         query = self.query(x)
         key = self.key(x)
-        weights = query @ key.transpose(-2, -1) / math.sqrt(head_size)
+        weights = query @ key.transpose(-2, -1) / math.sqrt(self.head_size)
         triu_mask = torch.triu(torch.ones(T, T), diagonal=1)
         weights = weights.masked_fill(triu_mask == 1, float("-inf"))
         weights = F.softmax(weights, dim=-1)
