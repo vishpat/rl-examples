@@ -9,7 +9,7 @@ from typing import Tuple
 import logging
 
 logger = logging.getLogger(__name__)
-logger.setLevel(logging.INFO)
+logger.setLevel(logging.DEBUG)
 logger.addHandler(logging.StreamHandler())
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -146,6 +146,7 @@ class GPTLanguageModel(nn.Module):
             nhead=num_heads,
             dropout=dropout,
             batch_first=True,
+            norm_first=True,
             device=device,
         )
         self.decoder = nn.TransformerDecoder(decoder_layer, num_layers=num_layers)
@@ -164,18 +165,18 @@ class GPTLanguageModel(nn.Module):
         for p in self.parameters():
             if p.dim() > 1:
                 nn.init.xavier_uniform_(p)
-        for p in self.blocks.parameters():
-            if p.dim() > 1:
-                nn.init.xavier_uniform_(p)
-        nn.init.xavier_uniform_(self.lm_head.weight)
 
     def forward(self, x, y=None):
-        embed = self.embed(x)
-        embed = self.pos_encoding(embed)
+        B, T   = x.shape
+        x = self.embed(x)
+        x = self.pos_encoding(x)
         x = self.decoder(
-            tgt=self.triu_mask[x.size(1), x.size(1)],
-            memory=torch.zeros(x.size(0), x.size(1), self.d_model).to(device),
+            tgt=x,
+            tgt_mask=self.triu_mask[:T, :T],
+            memory=torch.zeros(B, 1, self.d_model).to(device),
+            tgt_key_padding_mask=torch.zeros(B, T).to(device)
         )
+
         x = self.norm(x)
         logits = self.lm_head(x)
         loss = None
