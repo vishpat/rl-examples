@@ -167,18 +167,19 @@ class GPTLanguageModel(nn.Module):
                 nn.init.xavier_uniform_(p)
 
     def forward(self, x, y=None):
-        B, T   = x.shape
+        B, T = x.shape
         x = self.embed(x)
         x = self.pos_encoding(x)
-        x = self.decoder(
+        outputs = self.decoder(
             tgt=x,
             tgt_mask=self.triu_mask[:T, :T],
             memory=torch.zeros(B, 1, self.d_model).to(device),
-            tgt_key_padding_mask=torch.zeros(B, T).to(device)
+            tgt_key_padding_mask=torch.zeros(B, T).to(device),
+            memory_key_padding_mask=torch.zeros(B, 1).to(device)
         )
 
-        x = self.norm(x)
-        logits = self.lm_head(x)
+        outputs = self.norm(outputs)
+        logits = self.lm_head(outputs)
         loss = None
         if y is not None:
             B, T, C = logits.shape
