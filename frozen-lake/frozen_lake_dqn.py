@@ -1,4 +1,4 @@
-# frozen_lake_sb3_dqn_fullobs_smallcnn.py
+
 from __future__ import annotations
 
 import argparse
