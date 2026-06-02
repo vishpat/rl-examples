@@ -1,16 +1,19 @@
-# frozen_lake_random_env_cli.py
+# frozen_lake_sb3_dqn_fullobs_smallcnn.py
 from __future__ import annotations
 
 import argparse
 from dataclasses import dataclass
 from enum import IntEnum
-from typing import Any, Dict, Optional, Tuple, Union
+from typing import Optional, Tuple
 
 import numpy as np
 import gymnasium as gym
 from gymnasium import spaces
 
 
+# -----------------------------
+# Core types
+# -----------------------------
 class Action(IntEnum):
     LEFT = 0
     RIGHT = 1
@@ -27,7 +30,9 @@ class EnvConfig:
     random_map_each_reset: bool = True
     max_gen_tries: int = 5000
 
-    obs_mode: str = "state"  # "state" or "xy"
+    # "grid": (H,W) uint8 codes: 0 safe, 1 hole, 2 goal, 3 agent
+    # "onehot": (3,H,W) float32 planes: [holes, goal, agent]
+    obs_mode: str = "grid"
 
     step_reward: float = -0.01
     goal_reward: float = 1.0
@@ -40,32 +45,16 @@ class EnvConfig:
 
 @dataclass(frozen=True)
 class State:
-    board: np.ndarray
+    board: np.ndarray  # (H,W) int8: 0 safe, 1 hole, 2 goal
     start_xy: Tuple[int, int]
     goal_xy: Tuple[int, int]
     agent_xy: Tuple[int, int]
     steps: int
 
 
-@dataclass(frozen=True)
-class Observation:
-    value: Union[int, np.ndarray]
-
-
-@dataclass(frozen=True)
-class Reward:
-    value: float
-
-
-@dataclass(frozen=True)
-class Transition:
-    obs: Observation
-    reward: Reward
-    terminated: bool
-    truncated: bool
-    info: Dict[str, Any]
-
-
+# -----------------------------
+# Environment
+# -----------------------------
 class FrozenLakeRandomEnv(gym.Env):
     metadata = {"render_modes": ["human", "ansi"], "render_fps": 10}
 
@@ -78,32 +67,26 @@ class FrozenLakeRandomEnv(gym.Env):
         self._SAFE = 0
         self._HOLE = 1
         self._GOAL = 2
+        self._AGENT = 3
 
         self.action_space = spaces.Discrete(4)
-        if self.cfg.obs_mode == "xy":
-            self.observation_space = spaces.MultiDiscrete([self.w, self.h])
+
+        if self.cfg.obs_mode == "grid":
+            self.observation_space = spaces.Box(low=0, high=3, shape=(self.h, self.w), dtype=np.uint8)
+        elif self.cfg.obs_mode == "onehot":
+            self.observation_space = spaces.Box(low=0.0, high=1.0, shape=(3, self.h, self.w), dtype=np.float32)
         else:
-            self.observation_space = spaces.Discrete(self.w * self.h)
+            raise ValueError("obs_mode must be 'grid' or 'onehot'")
 
         self._rng = np.random.default_rng(self.cfg.seed)
         self._state: Optional[State] = None
 
-        # pygame state (optional)
+        # pygame state
         self._pygame_inited = False
         self._screen = None
         self._clock = None
 
         self._state = self._make_initial_state()
-
-    # -------- helpers --------
-    def _xy_to_state_id(self, x: int, y: int) -> int:
-        return y * self.w + x
-
-    def _make_observation(self, agent_xy: Tuple[int, int]) -> Observation:
-        x, y = agent_xy
-        if self.cfg.obs_mode == "xy":
-            return Observation(np.array([x, y], dtype=np.int64))
-        return Observation(int(self._xy_to_state_id(x, y)))
 
     def _neighbors(self, x: int, y: int):
         if x + 1 < self.w:
@@ -132,7 +115,7 @@ class FrozenLakeRandomEnv(gym.Env):
                     q.append((nx, ny))
         return False
 
-    def _generate_map(self) -> Tuple[np.ndarray, Tuple[int, int], Tuple[int, int]]:
+    def _generate_map(self):
         all_cells = [(x, y) for y in range(self.h) for x in range(self.w)]
         start = all_cells[self._rng.integers(len(all_cells))]
         goal = start
@@ -152,7 +135,6 @@ class FrozenLakeRandomEnv(gym.Env):
             if (not self.cfg.ensure_solvable) or self._is_solvable(board, start, goal):
                 return board, start, goal
 
-        # fallback: no holes
         board = np.full((self.h, self.w), self._SAFE, dtype=np.int8)
         gx, gy = goal
         board[gy, gx] = self._GOAL
@@ -161,6 +143,23 @@ class FrozenLakeRandomEnv(gym.Env):
     def _make_initial_state(self) -> State:
         board, start, goal = self._generate_map()
         return State(board=board, start_xy=start, goal_xy=goal, agent_xy=start, steps=0)
+
+    def _obs_grid(self, s: State) -> np.ndarray:
+        ax, ay = s.agent_xy
+        obs = s.board.astype(np.uint8).copy()
+        obs[ay, ax] = self._AGENT
+        return obs
+
+    def _obs_onehot(self, s: State) -> np.ndarray:
+        ax, ay = s.agent_xy
+        holes = (s.board == self._HOLE).astype(np.float32)
+        goal = (s.board == self._GOAL).astype(np.float32)
+        agent = np.zeros((self.h, self.w), dtype=np.float32)
+        agent[ay, ax] = 1.0
+        return np.stack([holes, goal, agent], axis=0)
+
+    def _make_obs(self, s: State) -> np.ndarray:
+        return self._obs_grid(s) if self.cfg.obs_mode == "grid" else self._obs_onehot(s)
 
     def _apply_action(self, agent_xy: Tuple[int, int], action: Action) -> Tuple[int, int]:
         x, y = agent_xy
@@ -173,19 +172,18 @@ class FrozenLakeRandomEnv(gym.Env):
         elif action == Action.DOWN:
             y = min(self.h - 1, y + 1)
         else:
-            raise ValueError(f"Invalid action: {action}")
+            raise ValueError(f"Invalid action {action}")
         return x, y
 
-    def _compute_reward_and_done(self, board: np.ndarray, agent_xy: Tuple[int, int]) -> Tuple[Reward, bool]:
+    def _reward_done(self, board: np.ndarray, agent_xy: Tuple[int, int]) -> Tuple[float, bool]:
         x, y = agent_xy
         tile = int(board[y, x])
         if tile == self._HOLE:
-            return Reward(self.cfg.hole_reward), True
+            return float(self.cfg.hole_reward), True
         if tile == self._GOAL:
-            return Reward(self.cfg.goal_reward), True
-        return Reward(self.cfg.step_reward), False
+            return float(self.cfg.goal_reward), True
+        return float(self.cfg.step_reward), False
 
-    # -------- gym API --------
     def reset(self, *, seed: Optional[int] = None, options: Optional[dict] = None):
         super().reset(seed=seed)
         if seed is not None:
@@ -195,17 +193,11 @@ class FrozenLakeRandomEnv(gym.Env):
             self._state = self._make_initial_state()
         else:
             s = self._state
-            self._state = State(
-                board=s.board,
-                start_xy=s.start_xy,
-                goal_xy=s.goal_xy,
-                agent_xy=s.start_xy,
-                steps=0,
-            )
+            self._state = State(board=s.board, start_xy=s.start_xy, goal_xy=s.goal_xy, agent_xy=s.start_xy, steps=0)
 
-        obs = self._make_observation(self._state.agent_xy)
+        obs = self._make_obs(self._state)
         info = {"start": self._state.start_xy, "goal": self._state.goal_xy, "board": self._state.board.copy()}
-        return obs.value, info
+        return obs, info
 
     def step(self, action: int):
         if self._state is None:
@@ -216,7 +208,7 @@ class FrozenLakeRandomEnv(gym.Env):
         next_steps = s.steps + 1
 
         next_xy = self._apply_action(s.agent_xy, act)
-        reward, terminated = self._compute_reward_and_done(s.board, next_xy)
+        reward, terminated = self._reward_done(s.board, next_xy)
 
         max_steps = self.cfg.max_steps if self.cfg.max_steps is not None else self.w * self.h * 4
         truncated = (next_steps >= max_steps) and (not terminated)
@@ -228,20 +220,12 @@ class FrozenLakeRandomEnv(gym.Env):
             agent_xy=next_xy,
             steps=next_steps,
         )
-
-        obs = self._make_observation(self._state.agent_xy)
-        transition = Transition(obs=obs, reward=reward, terminated=terminated, truncated=truncated, info={})
+        obs = self._make_obs(self._state)
 
         if self.cfg.render_mode is not None:
             self.render()
 
-        return (
-            transition.obs.value,
-            transition.reward.value,
-            transition.terminated,
-            transition.truncated,
-            transition.info,
-        )
+        return obs, reward, terminated, truncated, {}
 
     def render(self):
         if self._state is None:
@@ -279,7 +263,7 @@ class FrozenLakeRandomEnv(gym.Env):
             if not self._pygame_inited:
                 pygame.init()
                 self._screen = pygame.display.set_mode((W, H))
-                pygame.display.set_caption("FrozenLakeRandomEnv")
+                pygame.display.set_caption("FrozenLakeRandomEnv (full obs)")
                 self._clock = pygame.time.Clock()
                 self._pygame_inited = True
 
@@ -294,10 +278,7 @@ class FrozenLakeRandomEnv(gym.Env):
                     t = int(self._state.board[y, x])
                     color = COL_SAFE if t == self._SAFE else (COL_HOLE if t == self._HOLE else COL_GOAL)
                     rect = pygame.Rect(
-                        x * TILE + MARGIN,
-                        y * TILE + MARGIN,
-                        TILE - 2 * MARGIN,
-                        TILE - 2 * MARGIN,
+                        x * TILE + MARGIN, y * TILE + MARGIN, TILE - 2 * MARGIN, TILE - 2 * MARGIN
                     )
                     pygame.draw.rect(self._screen, color, rect, border_radius=8)
                     pygame.draw.rect(self._screen, COL_GRID, rect, width=2, border_radius=8)
@@ -322,42 +303,111 @@ class FrozenLakeRandomEnv(gym.Env):
             self._clock = None
 
 
-# ------------------------------
-# CLI: train / eval
-# ------------------------------
+# -----------------------------
+# SB3 wrappers + custom CNN
+# -----------------------------
+class GridToImageObs(gym.ObservationWrapper):
+    """
+    (H,W) uint8 codes 0..3 -> (H,W,1) uint8 scaled to [0,255]
+    """
+    def __init__(self, env: gym.Env):
+        super().__init__(env)
+        h, w = env.observation_space.shape
+        self.observation_space = spaces.Box(low=0, high=255, shape=(h, w, 1), dtype=np.uint8)
+
+    def observation(self, obs: np.ndarray) -> np.ndarray:
+        img = (obs.astype(np.uint16) * 85).astype(np.uint8)  # 0,85,170,255
+        return img[..., None]
+
+
+def make_small_grid_cnn():
+    """
+    Defined as a factory so torch is only imported when training/evaluating.
+    """
+    import torch as th
+    import torch.nn as nn
+    from stable_baselines3.common.torch_layers import BaseFeaturesExtractor
+
+    class SmallGridCNN(BaseFeaturesExtractor):
+        """
+        Works on small inputs like (C,8,8).
+        Robust due to AdaptiveAvgPool.
+        """
+
+        def __init__(self, observation_space: spaces.Box, features_dim: int = 128):
+            super().__init__(observation_space, features_dim)
+            n_input_channels = observation_space.shape[0]  # (C,H,W)
+
+            self.cnn = nn.Sequential(
+                nn.Conv2d(n_input_channels, 32, kernel_size=3, stride=1, padding=1),
+                nn.ReLU(),
+                nn.Conv2d(32, 64, kernel_size=3, stride=1, padding=1),
+                nn.ReLU(),
+                nn.AdaptiveAvgPool2d((2, 2)),
+                nn.Flatten(),
+            )
+
+            with th.no_grad():
+                sample = th.as_tensor(observation_space.sample()[None])
+                if sample.dtype == th.uint8:
+                    sample = sample.float() / 255.0
+                else:
+                    sample = sample.float()
+                n_flatten = self.cnn(sample).shape[1]
+
+            self.linear = nn.Sequential(
+                nn.Linear(n_flatten, features_dim),
+                nn.ReLU(),
+            )
+
+        def forward(self, observations: th.Tensor) -> th.Tensor:
+            if observations.dtype == th.uint8:
+                observations = observations.float() / 255.0
+            return self.linear(self.cnn(observations))
+
+    return SmallGridCNN
+
+
+# -----------------------------
+# CLI
+# -----------------------------
 def build_parser() -> argparse.ArgumentParser:
-    p = argparse.ArgumentParser(description="FrozenLakeRandomEnv: train/eval with Stable-Baselines3")
+    p = argparse.ArgumentParser(description="DQN on random FrozenLake with full-board observations (fixed small CNN).")
     sub = p.add_subparsers(dest="cmd", required=True)
 
-    # Shared env args
     def add_env_args(sp):
         sp.add_argument("--width", type=int, default=8)
         sp.add_argument("--height", type=int, default=8)
         sp.add_argument("--hole-prob", type=float, default=0.18)
         sp.add_argument("--no-ensure-solvable", action="store_true")
-        sp.add_argument("--random-map-each-reset", action="store_true", default=True)
-        sp.add_argument("--fixed-map", action="store_true", help="Do not regenerate map on reset (overrides --random-map-each-reset)")
-        sp.add_argument("--obs-mode", choices=["state", "xy"], default="state")
+        sp.add_argument("--fixed-map", action="store_true")
+        sp.add_argument("--seed", type=int, default=0, help="0 => no fixed seed")
+
+        sp.add_argument("--obs-mode", choices=["grid", "onehot"], default="grid")
+
         sp.add_argument("--step-reward", type=float, default=-0.01)
         sp.add_argument("--goal-reward", type=float, default=1.0)
         sp.add_argument("--hole-reward", type=float, default=0.0)
-        sp.add_argument("--max-steps", type=int, default=0, help="0 means default (W*H*4)")
-        sp.add_argument("--seed", type=int, default=0, help="0 means no fixed seed")
+        sp.add_argument("--max-steps", type=int, default=0, help="0 => default W*H*4")
 
-    train = sub.add_parser("train", help="Train a policy and save it")
-    add_env_args(train)
-    train.add_argument("--algo", choices=["ppo"], default="ppo")
-    train.add_argument("--timesteps", type=int, default=200_000)
-    train.add_argument("--n-envs", type=int, default=8)
-    train.add_argument("--save-path", type=str, default="ppo_frozen_lake_random.zip")
-    train.add_argument("--policy", type=str, default="MlpPolicy")
-    train.add_argument("--n-steps", type=int, default=256)
-    train.add_argument("--batch-size", type=int, default=256)
-    train.add_argument("--gamma", type=float, default=0.99)
+    tr = sub.add_parser("train", help="Train DQN and save model")
+    add_env_args(tr)
+    tr.add_argument("--timesteps", type=int, default=300_000)
+    tr.add_argument("--save-path", type=str, default="dqn_frozen_lake_fullobs.zip")
 
-    ev = sub.add_parser("eval", help="Load a policy and run episodes")
+    tr.add_argument("--learning-rate", type=float, default=1e-3)
+    tr.add_argument("--buffer-size", type=int, default=100_000)
+    tr.add_argument("--learning-starts", type=int, default=2_000)
+    tr.add_argument("--batch-size", type=int, default=64)
+    tr.add_argument("--gamma", type=float, default=0.99)
+    tr.add_argument("--train-freq", type=int, default=4)
+    tr.add_argument("--target-update-interval", type=int, default=1_000)
+    tr.add_argument("--exploration-fraction", type=float, default=0.2)
+    tr.add_argument("--exploration-final-eps", type=float, default=0.05)
+
+    ev = sub.add_parser("eval", help="Evaluate a saved model")
     add_env_args(ev)
-    ev.add_argument("--load-path", type=str, default="ppo_frozen_lake_random.zip")
+    ev.add_argument("--load-path", type=str, default="dqn_frozen_lake_fullobs.zip")
     ev.add_argument("--episodes", type=int, default=20)
     ev.add_argument("--render", choices=["none", "ansi", "human"], default="human")
     ev.add_argument("--deterministic", action="store_true", default=True)
@@ -365,15 +415,10 @@ def build_parser() -> argparse.ArgumentParser:
     return p
 
 
-def cfg_from_args(args, render_mode: Optional[str] = None) -> EnvConfig:
-    max_steps = None if getattr(args, "max_steps", 0) in (None, 0) else int(args.max_steps)
-    seed = None if getattr(args, "seed", 0) in (None, 0) else int(args.seed)
-
-    random_map_each_reset = True
-    if getattr(args, "fixed_map", False):
-        random_map_each_reset = False
-    else:
-        random_map_each_reset = bool(getattr(args, "random_map_each_reset", True))
+def cfg_from_args(args, render_mode: Optional[str]) -> EnvConfig:
+    max_steps = None if args.max_steps in (None, 0) else int(args.max_steps)
+    seed = None if args.seed in (None, 0) else int(args.seed)
+    random_map_each_reset = not bool(args.fixed_map)
 
     return EnvConfig(
         width=args.width,
@@ -391,62 +436,112 @@ def cfg_from_args(args, render_mode: Optional[str] = None) -> EnvConfig:
     )
 
 
+def make_sb3_env(cfg: EnvConfig):
+    from stable_baselines3.common.monitor import Monitor
+
+    env = FrozenLakeRandomEnv(cfg)
+    env = Monitor(env)
+
+    if cfg.obs_mode == "grid":
+        env = GridToImageObs(env)  # (H,W,1) uint8 [0,255]
+    # if onehot: already (3,H,W) float32
+    return env
+
+
 def train_main(args):
     from stable_baselines3 import DQN
-    from stable_baselines3.common.env_util import make_vec_env
+    from stable_baselines3.common.vec_env import DummyVecEnv, VecTransposeImage
+    from stable_baselines3.common.callbacks import EvalCallback
 
     cfg = cfg_from_args(args, render_mode=None)
 
-    def make_env():
-        return FrozenLakeRandomEnv(cfg)
+    # Vectorized env wrapper (DQN expects VecEnv; use 1 env)
+    env = DummyVecEnv([lambda: make_sb3_env(cfg)])
 
-    env = make_vec_env(make_env, n_envs=args.n_envs)
+    # For grid images: (H,W,1) -> transpose to (1,H,W) for PyTorch CNN
+    if cfg.obs_mode == "grid":
+        env = VecTransposeImage(env)
+
+    # Eval env (same preprocessing pipeline!)
+    eval_cfg = EnvConfig(**{**cfg.__dict__, "random_map_each_reset": True})
+    eval_env = DummyVecEnv([lambda: make_sb3_env(eval_cfg)])
+    if cfg.obs_mode == "grid":
+        eval_env = VecTransposeImage(eval_env)
+
+    eval_cb = EvalCallback(
+        eval_env,
+        best_model_save_path="best_model",
+        log_path="logs",
+        eval_freq=10_000,
+        n_eval_episodes=10,
+        deterministic=True,
+    )
+
+    SmallGridCNN = make_small_grid_cnn()
+    policy_kwargs = dict(
+        features_extractor_class=SmallGridCNN,
+        features_extractor_kwargs=dict(features_dim=128),
+    )
 
     model = DQN(
-        args.policy,
+        "CnnPolicy",
         env,
         verbose=1,
-        n_steps=args.n_steps,
+        learning_rate=args.learning_rate,
+        buffer_size=args.buffer_size,
+        learning_starts=args.learning_starts,
         batch_size=args.batch_size,
         gamma=args.gamma,
+        train_freq=args.train_freq,
+        target_update_interval=args.target_update_interval,
+        exploration_fraction=args.exploration_fraction,
+        exploration_final_eps=args.exploration_final_eps,
+        policy_kwargs=policy_kwargs,
     )
-    model.learn(total_timesteps=args.timesteps)
+
+    model.learn(total_timesteps=args.timesteps, callback=eval_cb)
     model.save(args.save_path)
+
+    eval_env.close()
     env.close()
 
 
 def eval_main(args):
     from stable_baselines3 import DQN
+    from stable_baselines3.common.vec_env import DummyVecEnv, VecTransposeImage
 
     render_mode = None if args.render == "none" else args.render
     cfg = cfg_from_args(args, render_mode=render_mode)
-    env = FrozenLakeRandomEnv(cfg)
+
+    env = DummyVecEnv([lambda: make_sb3_env(cfg)])
+    if cfg.obs_mode == "grid":
+        env = VecTransposeImage(env)
 
     model = DQN.load(args.load_path)
 
     for ep in range(args.episodes):
-        obs, info = env.reset()
-        terminated = truncated = False
+        obs = env.reset()
+        done = False
         ep_return = 0.0
-        while not (terminated or truncated):
+
+        while not done:
             action, _ = model.predict(obs, deterministic=args.deterministic)
-            obs, reward, terminated, truncated, info = env.step(int(action))
-            ep_return += float(reward)
+            obs, reward, dones, infos = env.step(action)
+            done = bool(dones[0])
+            ep_return += float(reward[0])
+
             if render_mode == "ansi":
-                print(env.render())
+                print(env.envs[0].render())
                 print("-" * 40)
+
         print(f"Episode {ep + 1}/{args.episodes} return: {ep_return:.3f}")
 
     env.close()
 
 
 if __name__ == "__main__":
-    parser = build_parser()
-    args = parser.parse_args()
-
+    args = build_parser().parse_args()
     if args.cmd == "train":
         train_main(args)
-    elif args.cmd == "eval":
-        eval_main(args)
     else:
-        raise RuntimeError("Unknown command")
+        eval_main(args)
