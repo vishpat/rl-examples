@@ -38,9 +38,10 @@ class EnvConfig:
     step_reward: float = -0.01
     goal_reward: float = 1.0
     hole_reward: float = -1.0
+    revisit_reward: float = -0.05
     shaping_reward_scale: float = 0.02
 
-    max_steps: Optional[int] = None
+    max_steps: Optional[int] = 20 
     render_mode: Optional[str] = None  # None, "ansi", "human"
     seed: Optional[int] = None
 
@@ -91,6 +92,7 @@ class FrozenLakeRandomEnv(gym.Env):
 
         self._rng = np.random.default_rng(self.cfg.seed)
         self._state: Optional[State] = None
+        self._visited: set[Tuple[int, int]] = set()
 
         # pygame state
         self._pygame_inited = False
@@ -98,6 +100,13 @@ class FrozenLakeRandomEnv(gym.Env):
         self._clock = None
 
         self._state = self._make_initial_state()
+        self._init_visited()
+
+    def _init_visited(self) -> None:
+        if self._state is None:
+            self._visited = set()
+        else:
+            self._visited = {self._state.agent_xy}
 
     def set_curriculum(self, *, hole_prob: float, random_map_each_reset: bool) -> None:
         self.cfg = replace(
@@ -248,6 +257,7 @@ class FrozenLakeRandomEnv(gym.Env):
             s = self._state
             self._state = State(board=s.board, start_xy=s.start_xy, goal_xy=s.goal_xy, agent_xy=s.start_xy, steps=0)
 
+        self._init_visited()
         obs = self._make_obs()
         info = {"start": self._state.start_xy, "goal": self._state.goal_xy, "board": self._state.board.copy()}
         return obs, info
@@ -264,6 +274,9 @@ class FrozenLakeRandomEnv(gym.Env):
         reward, terminated = self._reward_done(s.board, next_xy)
         if not terminated:
             reward += self._shape_reward(s.board, s.agent_xy, next_xy)
+        if next_xy in self._visited:
+            reward += float(self.cfg.revisit_reward)
+        self._visited.add(next_xy)
 
         max_steps = self.cfg.max_steps if self.cfg.max_steps is not None else self.w * self.h * 4
         truncated = (next_steps >= max_steps) and (not terminated)
@@ -430,12 +443,13 @@ def build_parser() -> argparse.ArgumentParser:
         sp.add_argument("--step-reward", type=float, default=-0.01)
         sp.add_argument("--goal-reward", type=float, default=1.0)
         sp.add_argument("--hole-reward", type=float, default=-1.0)
+        sp.add_argument("--revisit-reward", type=float, default=-0.2)
         sp.add_argument("--shaping-reward-scale", type=float, default=0.02)
         sp.add_argument("--max-steps", type=int, default=0, help="0 => default W*H*4")
 
     tr = sub.add_parser("train", help="Train DQN and save model")
     add_env_args(tr)
-    tr.add_argument("--timesteps", type=int, default=300_000)
+    tr.add_argument("--timesteps", type=int, default=100_000)
     tr.add_argument("--save-path", type=str, default="dqn_frozen_lake_fullobs.zip")
 
     tr.add_argument("--learning-rate", type=float, default=1e-3)
@@ -481,6 +495,7 @@ def cfg_from_args(args, render_mode: Optional[str]) -> EnvConfig:
         step_reward=args.step_reward,
         goal_reward=args.goal_reward,
         hole_reward=args.hole_reward,
+        revisit_reward=args.revisit_reward,
         shaping_reward_scale=args.shaping_reward_scale,
         max_steps=max_steps,
         render_mode=render_mode,
