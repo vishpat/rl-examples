@@ -204,13 +204,22 @@ class FrozenLakeRandomEnv(gym.Env):
     def _make_obs(self) -> np.ndarray:
         return self._obs_grid() if self.cfg.obs_mode == "grid" else self._obs_onehot()
 
-    def _terminal_info(self, board: np.ndarray, agent_xy: Tuple[int, int], terminated: bool, truncated: bool) -> Dict[str, bool]:
+    def _terminal_info(
+        self,
+        board: np.ndarray,
+        agent_xy: Tuple[int, int],
+        terminated: bool,
+        truncated: bool,
+        *,
+        revisited: bool = False,
+    ) -> Dict[str, bool]:
         ax, ay = agent_xy
         tile = int(board[ay, ax])
         return {
             "is_success": bool(terminated and tile == self._GOAL),
             "fell_in_hole": bool(terminated and tile == self._HOLE),
-            "timed_out": bool(truncated),
+            "timed_out": bool(truncated and not revisited),
+            "revisited": bool(revisited),
         }
 
     def _apply_action(self, agent_xy: Tuple[int, int], action: Action) -> Tuple[int, int]:
@@ -271,15 +280,16 @@ class FrozenLakeRandomEnv(gym.Env):
         next_steps = s.steps + 1
 
         next_xy = self._apply_action(s.agent_xy, act)
+        revisited = next_xy in self._visited
         reward, terminated = self._reward_done(s.board, next_xy)
         if not terminated:
             reward += self._shape_reward(s.board, s.agent_xy, next_xy)
-        if next_xy in self._visited:
+        if revisited:
             reward += float(self.cfg.revisit_reward)
         self._visited.add(next_xy)
 
         max_steps = self.cfg.max_steps if self.cfg.max_steps is not None else self.w * self.h * 4
-        truncated = (next_steps >= max_steps) and (not terminated)
+        truncated = revisited or ((next_steps >= max_steps) and (not terminated))
 
         self._state = State(
             board=s.board,
@@ -289,7 +299,7 @@ class FrozenLakeRandomEnv(gym.Env):
             steps=next_steps,
         )
         obs = self._make_obs()
-        info = self._terminal_info(s.board, next_xy, terminated, truncated)
+        info = self._terminal_info(s.board, next_xy, terminated, truncated, revisited=revisited)
 
         if self.cfg.render_mode is not None:
             self.render()
